@@ -1,0 +1,15 @@
+*******************************************
+*  Capacitor SPICE Model
+*  Subckt Name: C105_cer
+*  Parameterized version
+*******************************************
+*
+.SUBCKT C105_cer 1 4 PARAMS: Resr=0.03 Rleak=100e12 Cval=1e-6 fo=1e6
+*
+.PARAM Lval={1/((2*3.14159265358979*fo)**2 * Cval)}
+*
+L1    1     2     {Lval}
+R1    2     3     {Resr}
+C1    3     4     {Cval}
+R2    3     4     {Rleak}
+.ENDS
