@@ -22,13 +22,13 @@
       "showGrid": true,
       "traces": [
         {
-          "color": "rgb(228, 26, 28)",
-          "signal": "V(/C1)",
+          "color": "rgb(55, 126, 184)",
+          "signal": "V(C1)",
           "trace_type": 257
         },
         {
-          "color": "rgb(55, 126, 184)",
-          "signal": "V(/source)",
+          "color": "rgb(77, 175, 74)",
+          "signal": "V(source)",
           "trace_type": 257
         }
       ]

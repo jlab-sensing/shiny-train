@@ -1,0 +1,28 @@
+.title KiCad schematic
+.include /home/jtmadden/repos/jlab/shiny-train/cap.lib
+.model __S1 SW
++           vt=1
++           ron=1
+.model __S2 SW
++           vt=1
++           ron=1
+.save all
+.probe alli
+.probe p(S1)
+.probe p(V2)
+.probe p(V1)
+.probe p(R3)
+.probe p(R1)
+.probe p(XC2)
+.probe p(S2)
+.probe p(V3)
+.tran 10m 2
+S1 source C1 Net-_S1-C+_ GND __S1
+V2 Net-_S1-C+_ GND PWL( 0 0 199m 0 200m 1 ) 
+V1 Net-_R3-Pad2_ GND PWL( 0 0 99m 0 100m 1 ) 
+R3 source Net-_R3-Pad2_ 2.2k
+R1 load GND 200
+XC2 C1 GND C105_cer Cval=1m
+S2 source load Net-_S2-C+_ GND __S2
+V3 Net-_S2-C+_ GND PWL( 0 0 0.99 0 1 1 ) 
+.end

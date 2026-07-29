@@ -1884,35 +1884,77 @@
 		)
 		(uuid "e2d844ae-b69e-4c9a-98e5-0e777ef21a1c")
 	)
-	(label "LOAD"
-		(at 245.11 88.9 180)
+	(global_label "source"
+		(shape input)
+		(at 55.88 73.66 180)
+		(fields_autoplaced yes)
 		(effects
 			(font
 				(size 1.27 1.27)
 			)
-			(justify right bottom)
+			(justify right)
 		)
-		(uuid "088177ef-71cb-4ce6-84f8-0f1b733d352d")
+		(uuid "1d74b4e7-01f9-4f8a-ba1b-968254191b03")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 46.6053 73.66 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
 	)
-	(label "C1"
-		(at 152.4 91.44 180)
+	(global_label "load"
+		(shape input)
+		(at 245.11 88.9 0)
+		(fields_autoplaced yes)
 		(effects
 			(font
 				(size 1.27 1.27)
 			)
-			(justify right bottom)
+			(justify left)
 		)
-		(uuid "b413cfc8-9e26-420b-b6e6-56a3f056fe4c")
+		(uuid "dd354fe2-57cf-4848-959e-7f33003c80e6")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 252.2074 88.9 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
 	)
-	(label "source"
-		(at 55.88 73.66 0)
+	(global_label "C1"
+		(shape input)
+		(at 152.4 91.44 0)
+		(fields_autoplaced yes)
 		(effects
 			(font
 				(size 1.27 1.27)
 			)
-			(justify left bottom)
+			(justify left)
 		)
-		(uuid "fb7af7d2-9e6a-4775-812a-b442186b45cb")
+		(uuid "f887a62d-ca38-4f2e-8038-063a559e3188")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 157.8647 91.44 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
 	)
 	(symbol
 		(lib_id "Device:C")
@@ -2000,7 +2042,7 @@
 				)
 			)
 		)
-		(property "Sim.Library" "/home/jtmadden/repos/jlab/switcher/cap.lib"
+		(property "Sim.Library" "/home/jtmadden/repos/jlab/shiny-train/cap.lib"
 			(at 132.08 96.52 0)
 			(hide yes)
 			(show_name no)

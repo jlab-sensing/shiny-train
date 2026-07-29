@@ -1,0 +1,19 @@
+.title KiCad schematic
+.include "/home/jtmadden/repos/jlab/shiny-train/cap.lib"
+.model __S1 SW
++           vt=1
++           ron=1
+.model __Q1 NMOS level=8
+.model __S2 SW
++           vt=1
++           ron=1
+S1 /source /C1 Net-_S1-C+_ GND __S1
+V2 Net-_S1-C+_ GND PWL( 0 0 199m 0 200m 1 ) 
+V1 Net-_R3-Pad2_ GND PWL( 0 0 99m 0 100m 1 ) 
+R3 /source Net-_R3-Pad2_ 2.2k
+R1 /LOAD GND 200
+MQ1 unconnected-_Q1-D-Pad1_ unconnected-_Q1-G-Pad2_ unconnected-_Q1-S-Pad3_ NC-Q1-0 __Q1
+XC2 /C1 GND C105_cer Cval=1m
+S2 /source /LOAD Net-_S2-C+_ GND __S2
+V3 Net-_S2-C+_ GND PWL( 0 0 0.99 0 1 1 ) 
+.end
