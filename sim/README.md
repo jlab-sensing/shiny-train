@@ -3,9 +3,9 @@
 
 ## FAQ
 
-### Why `spicelib`?
+### `spicelib` vs `PySpice`?
 
-We are using `spicelib` instead of `PySpice` since it is being actively maintained. `PySpice` has many deprecated dependencies where examples would not work out of the box.
+`spicelib` is better maintained but hooks into a SPICE executable. `PySpice` hooks into underlying C libraries to give SPICE functionality in python. In order to change state while the simulation is running we need `PySpice`.
 
 ### Cannot find libraries in netlist
 
@@ -27,3 +27,7 @@ The following error happens when KiCAD *sheet* labels are used instead of *globa
 spicelib.editor.editor_errors.UnrecognizedSyntaxError: Line: "S1 /source /C1 Net-_S1-C+_ GND __S1
 " doesn't match regular expression "^(?P<designator>S§?\w+)(?P<nodes>(?:\s+[\w+-\.¥«»]+){4})\s+(?P<value>.*)(?:\s+;.*)?\\?\s*$"
 ```
+
+### What non-ideal capacitor model is being used?
+
+[see this](https://www.ecircuitcenter.com/Calc/Cap_Model/Create_Cap_SPICE_Model.htm)

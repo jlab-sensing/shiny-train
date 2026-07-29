@@ -1,0 +1,24 @@
+.title KiCad schematic
+.include "/home/jtmadden/repos/jlab/shiny-train/cap.lib"
+.model __Q1 VDMOS NCHAN
+.model __Q2 VDMOS NCHAN
+.save all
+.probe alli
+.probe p(R3)
+.probe p(MQ1)
+.probe p(V1)
+.probe p(V2)
+.probe p(V3)
+.probe p(MQ2)
+.probe p(R1)
+.probe p(XC2)
+.tran 10m 2
+R3 source Net-_R3-Pad2_ 2.2k
+MQ1 source Net-_Q1-G_ C1 __Q1
+V1 Net-_R3-Pad2_ GND PWL( 0 0 99m 0 100m 1 ) 
+V2 Net-_Q1-G_ GND PWL( 0 0 199m 0 200m 1 ) 
+V3 Net-_Q2-G_ GND PWL( 0 0 0.99 0 1 1 ) 
+MQ2 source Net-_Q2-G_ load __Q2
+R1 load GND 200
+XC2 C1 GND C_real Cval=1m
+.end

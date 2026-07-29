@@ -2053,7 +2053,7 @@
 				)
 			)
 		)
-		(property "Sim.Name" "C105_cer"
+		(property "Sim.Name" "C_real"
 			(at 132.08 96.52 0)
 			(hide yes)
 			(show_name no)

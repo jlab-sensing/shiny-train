@@ -1,0 +1,11 @@
+Note: gnd in a subcircuit is not set to 0 automatically
+
+Note: Compatibility modes selected: ps lt ki a
+
+
+Circuit: KiCad schematic
+
+Error: unknown subckt: xc2 probe_int_c1_xc2_1 probe_int_probe_int_gnd_xc2_xc2_2 c105_cer cval=1m
+    in line no. 43 from file /home/jtmadden/repos/jlab/shiny-train/sim/scripts/tmp/example_1.net
+    Simulation interrupted due to error!
+

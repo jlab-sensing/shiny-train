@@ -4,7 +4,7 @@
 *  Parameterized version
 *******************************************
 *
-.SUBCKT C105_cer 1 4 PARAMS: Resr=0.03 Rleak=100e12 Cval=1e-6 fo=1e6
+.SUBCKT C_real 1 4 PARAMS: Resr=0.03 Rleak=100e12 Cval=1e-6 fo=1e6
 *
 .PARAM Lval={1/((2*3.14159265358979*fo)**2 * Cval)}
 *
@@ -13,3 +13,11 @@ R1    2     3     {Resr}
 C1    3     4     {Cval}
 R2    3     4     {Rleak}
 .ENDS
+
+
+.subckt C_ideal 1 2 PARAMS: C=1u ESR=10m ESL=1n RLEAK=1G
+
+* Unused parameters are retained for interface compatibility.
+C1 1 2 {C}
+
+.ends
