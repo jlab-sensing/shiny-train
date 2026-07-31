@@ -4,8 +4,51 @@ Ideally every model would implement a input and output source such that they
 can be controlled from outside the original function.
 """
 
+import math
+
 from PySpice.Spice.Netlist import Circuit
 from PySpice.Unit import *
+from PySpice.Spice.NgSpice.Shared import NgSpiceShared
+
+
+class SineShared(NgSpiceShared):
+    def __init__(self, amplitude, frequency, **kwargs):
+
+        super().__init__(**kwargs)
+
+        self._amplitude = amplitude
+        self._pulsation = float(frequency.pulsation)
+
+    def get_vsrc_data(self, voltage, time, node, ngspice_id):
+        self._logger.debug('ngspice_id-{} get_vsrc_data @{} node {}'.format(ngspice_id, time, node))
+        voltage[0] = self._amplitude * math.sin(self._pulsation * time)
+        return 0
+
+    def get_isrc_data(self, current, time, node, ngspice_id):
+        self._logger.debug('ngspice_id-{} get_isrc_data @{} node {}'.format(ngspice_id, time, node))
+        current[0] = 1.
+        return 0
+
+    def send_data(self, data, count, ngspice_id):
+        # called at each simulation step
+        print(f"Step {count}: {data.actual_vector_values}")
+        return 0
+
+
+def create_example_shared_model() -> Circuit:
+    """Creates a voltage divider circuit as an example of shared model.
+
+    Returns:
+        Circuit model.
+    """
+
+    circuit = Circuit("Array of capacitor storage")
+
+    circuit.V("input", "input", circuit.gnd, "dc 0 external")
+    circuit.R(1, 'input', 'output', 10@u_kOhm)
+    circuit.R(2, 'output', circuit.gnd, 1@u_kOhm)
+
+    return circuit
 
 
 def create_basic_model(model: str = "C_real", **kwargs) -> Circuit:
