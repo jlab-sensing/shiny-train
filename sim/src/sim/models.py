@@ -4,6 +4,8 @@ Ideally every model would implement a input and output source such that they
 can be controlled from outside the original function.
 """
 
+import os
+
 import math
 
 import matplotlib.pyplot as plt
@@ -12,7 +14,7 @@ from PySpice.Spice.Netlist import Circuit
 from PySpice.Unit import *
 from PySpice.Spice.NgSpice.Shared import NgSpiceShared
 
-
+caplib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cap.lib")
 
 class CapacitorStorageSim:
     class CustomShared(NgSpiceShared):
@@ -121,7 +123,7 @@ class CapacitorStorageSim:
         circuit = Circuit("Capacitor Array")
 
         # capacitor models
-        circuit.include("/home/jtmadden/repos/jlab/shiny-train/cap.lib")
+        circuit.include(caplib_path)
 
         # switch model
         circuit.model("S", "SW", vt=1, ron=1)
@@ -273,7 +275,7 @@ def create_basic_model(model: str = "C_real", **kwargs) -> Circuit:
 
     # Include capacitor subcircuit library
     # TODO update to a relative path
-    circuit.include("/home/jtmadden/repos/jlab/shiny-train/cap.lib")
+    circuit.include(caplib_path)
 
     # Switch models
     circuit.model(
