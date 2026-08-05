@@ -16,6 +16,19 @@ from PySpice.Spice.NgSpice.Shared import NgSpiceShared
 
 caplib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cap.lib")
 
+
+class Capacitor:
+    def __init__(self, capacitance: float):
+        self.capacitance = capacitance
+        self.voltage = None
+        self.state = None
+        self.assignment = None
+        self.connection = None
+
+    def set_state(self, state):
+        self.state = state
+
+
 class CapacitorStorageSim:
     class CustomShared(NgSpiceShared):
         """Class that takes in a callback and determines the current state of the
