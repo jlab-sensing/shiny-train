@@ -5,18 +5,17 @@
 Implements a basic voltage divider with a source controlled by python code
 """
 
-from sim.models import create_example_shared_model, SineShared
-
+import matplotlib.pyplot as plt
 from PySpice.Logging import Logging
 from PySpice.Unit import *
 
-import matplotlib.pyplot as plt
+from sim.models import SineShared, create_example_shared_model
 
 logger = Logging.setup_logging()
 
 circuit = create_example_shared_model()
 
-sine_shared = SineShared(10@u_V, 5@u_Hz)
+sine_shared = SineShared(10 @ u_V, 5 @ u_Hz)
 
 simulator = circuit.simulator(
     temperature=25,

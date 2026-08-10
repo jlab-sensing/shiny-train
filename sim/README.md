@@ -1,5 +1,30 @@
 # Simulator
 
+## Install
+
+```
+pip3 install .
+```
+
+## Linting and formatting
+
+[Ruff](https://docs.astral.sh/ruff/) is used for formatting and linting. Install development dependencies and run `ruff`.
+
+```
+pip3 install -e .[dev]
+ruff format
+ruff check
+```
+
+## Unittests
+
+The builtin module [unittest](https://docs.python.org/3/library/unittest.html) is used for writing tests. See [this](https://docs.python.org/3/library/unittest.html#assert-methods) page for list of assert methods. Use the following to run the tests.
+
+```
+python -m unittest
+```
+
+### Running 
 
 ## FAQ
 
