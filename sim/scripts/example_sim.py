@@ -6,6 +6,7 @@ from sim.models import CapacitorStorageSim
 
 last_load = 0
 
+
 def callback(time: float, cap_voltages: list) -> tuple[float, list]:
     global last_load
 
@@ -25,6 +26,7 @@ def callback(time: float, cap_voltages: list) -> tuple[float, list]:
     last_load = load
 
     return load, switch_state
+
 
 sim = CapacitorStorageSim(callback, [10e-6, 100e-6])
 sim.run()

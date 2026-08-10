@@ -4,15 +4,13 @@ Ideally every model would implement a input and output source such that they
 can be controlled from outside the original function.
 """
 
+import math
 import os
 
-import math
-
 import matplotlib.pyplot as plt
-
 from PySpice.Spice.Netlist import Circuit
-from PySpice.Unit import *
 from PySpice.Spice.NgSpice.Shared import NgSpiceShared
+from PySpice.Unit import *
 
 caplib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cap.lib")
 
@@ -44,7 +42,9 @@ class CapacitorStorageSim:
         that includes all capacitors.
         """
 
-        def __init__(self, cb: Callable[[float, list], tuple[float, list]], caps: list, **kwargs):
+        def __init__(
+            self, cb: Callable[[float, list], tuple[float, list]], caps: list, **kwargs
+        ):
             """Sets the callback function.
 
             Args:
@@ -60,9 +60,10 @@ class CapacitorStorageSim:
             self.load_switch = 0
             self.switch_state = [0 for _ in caps]
 
-
         def get_vsrc_data(self, voltage, time, node, ngspice_id):
-            self._logger.debug('ngspice_id-{} get_vsrc_data @{} node {}'.format(ngspice_id, time, node))
+            self._logger.debug(
+                f"ngspice_id-{ngspice_id} get_vsrc_data @{time} node {node}"
+            )
 
             if node == "input":
                 voltage[0] = 1
@@ -76,8 +77,10 @@ class CapacitorStorageSim:
             return 0
 
         def get_isrc_data(self, current, time, node, ngspice_id):
-            self._logger.debug('ngspice_id-{} get_isrc_data @{} node {}'.format(ngspice_id, time, node))
-            current[0] = 1.
+            self._logger.debug(
+                f"ngspice_id-{ngspice_id} get_isrc_data @{time} node {node}"
+            )
+            current[0] = 1.0
             return 0
 
         def send_data(self, data, count, ngspice_id):
@@ -90,7 +93,7 @@ class CapacitorStorageSim:
                 count = 16
 
             Actual data
-                data = 
+                data =
                 {'vinput#branch': 0j, 'v0#branch': 0j, 'v1#branch': 0j,
                 'l.x0.l1#branch': 0j, 'l.x1.l1#branch': 0j, 'x1.3': 0j, 'x1.2': 0j,
                 'c1+': 0j, 'vsw1+': 0j, 'x0.3': 0j, 'x0.2': 0j, 'c0+': 0j, 'vsw0+':
@@ -105,7 +108,6 @@ class CapacitorStorageSim:
             self.load_switch, self.switch_state = self.cb(time, cap_voltages)
 
             return 0
-
 
     def __init__(self, cb: Callable[list, list], caps: list):
         """Create a simulation instance with a given configuration.
@@ -143,14 +145,13 @@ class CapacitorStorageSim:
 
         # input source
         circuit.V("input", "input", circuit.gnd, "dc 0 external")
-        circuit.R(1, "input", "output", 2.2@u_kOhm)
+        circuit.R(1, "input", "output", 2.2 @ u_kOhm)
 
         # capacitor array
         for idx, cap in enumerate(self.caps):
             # switch
             circuit.V(idx, f"VSW{idx}+", circuit.gnd, "dc 0 external")
-            circuit.S(idx, "output", f"C{idx}+", f"VSW{idx}+", circuit.gnd,
-                      model="S")
+            circuit.S(idx, "output", f"C{idx}+", f"VSW{idx}+", circuit.gnd, model="S")
 
             # capacitor
             circuit.X(idx, model, f"C{idx}+", circuit.gnd, Cval=cap)
@@ -158,12 +159,11 @@ class CapacitorStorageSim:
         # load
         circuit.V("load", "VSWload", circuit.gnd, "dc 0 external")
         circuit.S("Sload", "output", "load", "VSWload", circuit.gnd, model="S")
-        circuit.R(2, "load", circuit.gnd, 200@u_Ohm)
+        circuit.R(2, "load", circuit.gnd, 200 @ u_Ohm)
 
         return circuit
 
     def _simulate(self, circuit: Circuit):
-
 
         simulator = circuit.simulator(
             temperature=25,
@@ -226,7 +226,6 @@ class CapacitorStorageSim:
 
         plt.show()
 
-
     def save(self):
         pass
 
@@ -240,13 +239,13 @@ class SineShared(NgSpiceShared):
         self._pulsation = float(frequency.pulsation)
 
     def get_vsrc_data(self, voltage, time, node, ngspice_id):
-        self._logger.debug('ngspice_id-{} get_vsrc_data @{} node {}'.format(ngspice_id, time, node))
+        self._logger.debug(f"ngspice_id-{ngspice_id} get_vsrc_data @{time} node {node}")
         voltage[0] = self._amplitude * math.sin(self._pulsation * time)
         return 0
 
     def get_isrc_data(self, current, time, node, ngspice_id):
-        self._logger.debug('ngspice_id-{} get_isrc_data @{} node {}'.format(ngspice_id, time, node))
-        current[0] = 1.
+        self._logger.debug(f"ngspice_id-{ngspice_id} get_isrc_data @{time} node {node}")
+        current[0] = 1.0
         return 0
 
     def send_data(self, data, count, ngspice_id):
@@ -265,8 +264,8 @@ def create_example_shared_model() -> Circuit:
     circuit = Circuit("Array of capacitor storage")
 
     circuit.V("input", "input", circuit.gnd, "dc 0 external")
-    circuit.R(1, 'input', 'output', 10@u_kOhm)
-    circuit.R(2, 'output', circuit.gnd, 1@u_kOhm)
+    circuit.R(1, "input", "output", 10 @ u_kOhm)
+    circuit.R(2, "output", circuit.gnd, 1 @ u_kOhm)
 
     return circuit
 
