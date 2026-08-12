@@ -2,32 +2,50 @@
 
 """Runs an example simulation"""
 
-from sim.models import CapacitorStorageSim
-
-last_load = 0
-
-
-def callback(time: float, cap_voltages: list) -> tuple[float, list]:
-    global last_load
-
-    print(f"Simulation time: {time}")
-
-    switch_state = [1 for _ in cap_voltages]
-
-    if cap_voltages[0] > 0.5:
-        print("load on")
-        load = 1
-    elif cap_voltages[0] < 0.2:
-        print("load off")
-        load = 0
-    else:
-        load = last_load
-
-    last_load = load
-
-    return load, switch_state
+from sim.models import (
+    Capacitor,
+    CapacitorStorageSim,
+    CapacitorStorageSimConfig,
+    Sink,
+    Source,
+)
 
 
-sim = CapacitorStorageSim(callback, [10e-6, 100e-6])
+class MyConfig(CapacitorStorageSimConfig):
+    def callback(self, time: float):
+
+        # print(f"Simulation time: {time}")
+
+        # connect caps
+        for cap in self.caps:
+            cap.connect(0)
+
+        if time < 0.5:
+            self.src.connect(0)
+            self.sink.disconnect(0)
+        elif time >= 0.5:
+            self.src.disconnect(0)
+            self.sink.connect(0)
+
+        # toggle load based on cap voltage
+        # if self.caps[0].voltage > 0.5:
+        #    print("discharge")
+        #    self.src.disconnect(0)
+        #    self.sink.connect(0)
+        # elif self.caps[0].voltage < 0.2:
+        #    print("charge")
+        #    self.src.connect(0)
+        #    self.sink.disconnect(0)
+
+
+cap_values = [10e-6, 100e-6]
+
+src = Source()
+caps = [Capacitor(c) for c in cap_values]
+sink = Sink()
+
+config = MyConfig(src, caps, sink, len(caps))
+
+sim = CapacitorStorageSim(config)
 sim.run()
 sim.plot()

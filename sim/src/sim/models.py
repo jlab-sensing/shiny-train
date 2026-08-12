@@ -15,16 +15,110 @@ from PySpice.Unit import *
 caplib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cap.lib")
 
 
-class Capacitor:
-    def __init__(self, capacitance: float):
-        self.capacitance = capacitance
-        self.voltage = None
-        self.state = None
-        self.assignment = None
-        self.connection = None
+class SwitchedComponent:
+    """Metaclass for objects that are connected to n number of switches.
+    Implements logic to connect, disconnect, and get the current state of each
+    switch
+    """
 
-    def set_state(self, state):
-        self.state = state
+    def __init__(self, n: int):
+        """Initializes array of switch states.
+
+        Args:
+            n: Number of swtiches
+        """
+
+        self._sw_arr = [0 for _ in range(n)]
+
+    def connect(self, idx: int):
+        """Connects a switch.
+
+        Args:
+            idx: Index of the switch
+        """
+
+        self._sw_arr[idx] = 1
+
+    def disconnect(self, idx: int):
+        """Disconnects a switch.
+
+        Args:
+            idx: Index of the switch
+        """
+
+        self._sw_arr[idx] = 0
+
+    def state(self, idx: int) -> int:
+        """Gets the current state of a switch.
+
+        Args:
+            idx: Index of the switch.
+
+        Returns:
+            bool, 1 for on, 0 for off
+        """
+
+        return self._sw_arr[idx]
+
+
+class Capacitor(SwitchedComponent):
+    def __init__(self, farads: float):
+        self.farads = farads
+        self.voltage = 0
+
+
+class Source(SwitchedComponent):
+    def __init__(self):
+        pass
+
+
+class Sink(SwitchedComponent):
+    def __init__(self):
+        pass
+
+
+class CapacitorStorageSimConfig:
+    def __init__(
+        self,
+        src: Source,
+        caps: list[Capacitor],
+        sink: Sink,
+        p_lines: int,
+    ):
+        """
+        Power lines connect the power source to the sink. This allows for
+        multiple capacitors to charge while one is discharging.
+
+        Args:
+            cb: Callback function
+            src: Power source
+            caps: Capacitor array values
+            sink: Power sink
+            p_lines: Number of available power lines
+        """
+
+        # save parameters
+        self.src = src
+        self.caps = caps
+        self.sink = sink
+        self.p_lines = p_lines
+
+        # Initialize number of switches
+        SwitchedComponent.__init__(src, p_lines)
+        SwitchedComponent.__init__(sink, p_lines)
+        for cap in caps:
+            SwitchedComponent.__init__(cap, p_lines)
+
+    def callback(self, time: float):
+        """Callback function to perform actions during sim runtime.
+
+        This function should be overwritten by the user.
+
+        Args:
+            time: Timestep of simulation
+        """
+
+        return
 
 
 class CapacitorStorageSim:
@@ -42,37 +136,39 @@ class CapacitorStorageSim:
         that includes all capacitors.
         """
 
-        def __init__(
-            self, cb: Callable[[float, list], tuple[float, list]], caps: list, **kwargs
-        ):
-            """Sets the callback function.
-
-            Args:
-                cb: Callback function
-                caps: Capacitor array values
-            """
+        def __init__(self, config: CapacitorStorageSimConfig, **kwargs):
+            """Sets the callback function."""
 
             super().__init__(**kwargs)
-            self.cb = cb
-            self.caps = caps
-
-            # initialize zero list for switches
-            self.load_switch = 0
-            self.switch_state = [0 for _ in caps]
+            self.config = config
 
         def get_vsrc_data(self, voltage, time, node, ngspice_id):
             self._logger.debug(
                 f"ngspice_id-{ngspice_id} get_vsrc_data @{time} node {node}"
             )
 
-            if node == "input":
+            # TODO Update to configured power source
+            if node == "v_src":
                 voltage[0] = 1
-            elif node == "vload":
-                voltage[0] = self.load_switch
-            else:
-                for idx, _ in enumerate(self.caps):
-                    if node == f"v{idx}":
-                        voltage[0] = self.switch_state[idx]
+
+            # TODO Update for constant sink power
+            if node == "sink":
+                pass
+
+            # configure switches
+            for n in range(self.config.p_lines):
+                # Set capacitor switches
+                for idx, cap in enumerate(self.config.caps):
+                    if node == f"v_ctrl_pwr{n}_c{idx}":
+                        voltage[0] = cap.state(n)
+
+                # Set source switches
+                if node == f"v_ctrl_src_pwr{n}":
+                    voltage[0] = self.config.src.state(n)
+
+                # Set sink switches
+                if node == f"v_ctrl_pwr{n}_sink":
+                    voltage[0] = self.config.sink.state(n)
 
             return 0
 
@@ -92,7 +188,7 @@ class CapacitorStorageSim:
             Number of parameters
                 count = 16
 
-            Actual data
+            Actual data example
                 data =
                 {'vinput#branch': 0j, 'v0#branch': 0j, 'v1#branch': 0j,
                 'l.x0.l1#branch': 0j, 'l.x1.l1#branch': 0j, 'x1.3': 0j, 'x1.2': 0j,
@@ -100,35 +196,37 @@ class CapacitorStorageSim:
                 0j, 'output': 0j, 'input': 0j, 'time': (2e-05+0j)}
             """
 
-            cap_voltages = [0 for _ in self.caps]
-            for idx, _ in enumerate(self.caps):
-                cap_voltages[idx] = data[f"c{idx}+"].real
+            for idx, cap in enumerate(self.config.caps):
+                cap.voltage = data[f"c{idx}_pos"].real
 
             time = data["time"].real
-            self.load_switch, self.switch_state = self.cb(time, cap_voltages)
+
+            self.config.callback(time)
 
             return 0
 
-    def __init__(self, cb: Callable[list, list], caps: list):
+    def __init__(
+        self,
+        config: CapacitorStorageSimConfig,
+    ):
         """Create a simulation instance with a given configuration.
 
+
         Args:
-            cb: Callback function
-            caps: Capacitor array values
+            config: Configuration
         """
 
-        self.cb = cb
-        self.caps = caps
-        self.shared = self.CustomShared(cb, caps, send_data=True)
+        self.config = config
 
-    def _create_circuit(self, caps: list, model: str = "C_real") -> Circuit:
+        self.shared = self.CustomShared(config, send_data=True)
+
+    def _create_circuit(self, model: str = "C_real") -> Circuit:
         """Creates the circuit model.
 
         Available fields for model is "C_real" and "C_ideal". At time of writing
         the capacitor model incorperates "Resr", "Rleak", "Cval", "fo".
 
         Args:
-            caps: Capacitor array values
             model: Capacitor model
 
         Returns:
@@ -141,25 +239,76 @@ class CapacitorStorageSim:
         circuit.include(caplib_path)
 
         # switch model
+        # threshold = 1 V
+        # on resistance = 1 Ohm
         circuit.model("S", "SW", vt=1, ron=1)
 
         # input source
-        circuit.V("input", "input", circuit.gnd, "dc 0 external")
-        circuit.R(1, "input", "output", 2.2 @ u_kOhm)
+        circuit.V("_src", "v_src_pos", circuit.gnd, "dc 0 external")
+        circuit.R(1, "v_src_pos", "src", 2.2 @ u_kOhm)
+
+        # circuit.V("src") creates an element like Vsrc
+
+        # input power switches
+        for n in range(self.config.p_lines):
+            circuit.V(
+                f"_ctrl_src_pwr{n}",
+                f"ctrl_src_pwr{n}_pos",
+                circuit.gnd,
+                "dc 0 external",
+            )
+            circuit.S(
+                f"_src_pwr{n}",
+                "src",
+                f"pwr{n}",
+                f"ctrl_src_pwr{n}_pos",
+                circuit.gnd,
+                model="S",
+            )
 
         # capacitor array
-        for idx, cap in enumerate(self.caps):
-            # switch
-            circuit.V(idx, f"VSW{idx}+", circuit.gnd, "dc 0 external")
-            circuit.S(idx, "output", f"C{idx}+", f"VSW{idx}+", circuit.gnd, model="S")
+        for idx, cap in enumerate(self.config.caps):
+            # connections to power lines
+            for n in range(self.config.p_lines):
+                # switch
+                circuit.V(
+                    f"_ctrl_pwr{n}_c{idx}",
+                    f"ctrl_pwr{n}_c{idx}_pos",
+                    circuit.gnd,
+                    "dc 0 external",
+                )
+                circuit.S(
+                    f"_pwr{n}_c{idx}",
+                    f"pwr{n}",
+                    f"c{idx}_pos",
+                    f"ctrl_pwr{n}_c{idx}_pos",
+                    circuit.gnd,
+                    model="S",
+                )
 
             # capacitor
-            circuit.X(idx, model, f"C{idx}+", circuit.gnd, Cval=cap)
+            circuit.X(idx, model, f"c{idx}_pos", circuit.gnd, Cval=cap.farads)
 
-        # load
-        circuit.V("load", "VSWload", circuit.gnd, "dc 0 external")
-        circuit.S("Sload", "output", "load", "VSWload", circuit.gnd, model="S")
-        circuit.R(2, "load", circuit.gnd, 200 @ u_Ohm)
+        # output power switches
+        for n in range(self.config.p_lines):
+            # load
+            circuit.V(
+                f"_ctrl_pwr{n}_sink",
+                f"ctrl_pwr{n}_sink_pos",
+                circuit.gnd,
+                "dc 0 external",
+            )
+            circuit.S(
+                f"_pwr{n}_sink",
+                f"pwr{n}",
+                "sink",
+                f"ctrl_pwr{n}_sink_pos",
+                circuit.gnd,
+                model="S",
+            )
+
+        # resistive load
+        circuit.R(2, "sink", circuit.gnd, 200 @ u_Ohm)
 
         return circuit
 
@@ -186,45 +335,115 @@ class CapacitorStorageSim:
             caps: Capacitor array values
         """
 
-        circuit = self._create_circuit(self.caps)
+        circuit = self._create_circuit()
         print(circuit)
         self.analysis = self._simulate(circuit)
 
     def _plot_capacitors(self):
-        _, axs = plt.subplots(len(self.caps), 2)
+        _, axs = plt.subplots(len(self.config.caps), 1, sharex=True)
 
         # Titles
-        axs[0][0].set_title("Capacitor Voltage")
-        axs[0][1].set_title("Control Voltage")
+        axs[0].set_title("Capacitor Voltages")
 
-        for idx, cap in enumerate(self.caps):
+        for idx, cap in enumerate(self.config.caps):
             # Voltage plot (column 0)
-            axs[idx][0].plot(self.analysis[f"C{idx}+"], label=f"{cap}")
-            axs[idx][0].set_ylabel(f"{cap}")
+            axs[idx].plot(self.analysis[f"c{idx}_pos"], label=f"{cap.farads}")
+            axs[idx].set_ylabel("Voltage (V)")
 
-            # Control signal plot (column 1)
-            axs[idx][1].plot(self.analysis[f"VSW{idx}+"], label=f"{cap}")
-
-        for ax_row in axs:
-            for ax in ax_row:
-                ax.grid()
-                ax.legend()
-
-    def _plot_input_output(self):
-        _, axs = plt.subplots(2, 1)
-
-        axs[0].plot(self.analysis["input"], label="input")
-        axs[1].plot(self.analysis["output"], label="output")
+        axs[-1].set_xlabel("Time (ms)")
 
         for ax in axs:
             ax.grid()
             ax.legend()
 
+    def _plot_cap_switches(self):
+        num_switches = self.config.p_lines * len(self.config.caps)
+        _, axs = plt.subplots(num_switches, sharex=True)
+
+        axs[0].set_title("Capacitor Switch states")
+
+        row = 0
+        for idx, cap in enumerate(self.config.caps):
+            for line in range(self.config.p_lines):
+                axs[row].plot(
+                    self.analysis[f"ctrl_pwr{line}_c{idx}_pos"],
+                    label=f"C: {cap.farads} line: {line}",
+                )
+                axs[row].set_ylabel("Switch State")
+                row += 1
+
+        axs[-1].set_xlabel("Time (ms)")
+
+        for ax in axs:
+            ax.grid()
+            ax.legend()
+
+    def _plot_input_output(self):
+        _, axs = plt.subplots(2, 1, sharex=True)
+
+        axs[0].set_title("Source/Sink Voltages")
+
+        axs[0].plot(self.analysis["src"], label="src")
+        axs[1].plot(self.analysis["sink"], label="sink")
+
+        for ax in axs:
+            ax.set_ylabel("Voltage (V)")
+
+        axs[1].set_xlabel("Time (ms)")
+
+        for ax in axs:
+            ax.grid()
+            ax.legend()
+
+    def _plot_io_switches(self):
+        rows = 2 * self.config.p_lines
+        _, axs = plt.subplots(rows, sharex=True)
+
+        axs[0].set_title("Source/Sink Switches")
+
+        axs[-1].set_xlabel("Time (ms)")
+
+        ax_idx = 0
+
+        for n in range(self.config.p_lines):
+            axs[ax_idx].plot(
+                self.analysis[f"ctrl_src_pwr{n}_pos"], label=f"source, line {n}"
+            )
+            ax_idx += 1
+
+        for n in range(self.config.p_lines):
+            axs[ax_idx].plot(
+                self.analysis[f"ctrl_pwr{n}_sink_pos"], label=f"sink, line {n}"
+            )
+            ax_idx += 1
+
+        for ax in axs:
+            ax.set_ylabel("State")
+            ax.grid()
+            ax.legend()
+
+    def _plot_power_lines(self):
+        _, axs = plt.subplots(self.config.p_lines, sharex=True)
+
+        axs[0].set_title("Power line voltages")
+
+        axs[-1].set_xlabel("Time (ms)")
+
+        for ax, n in zip(axs, range(self.config.p_lines)):
+            ax.plot(self.analysis[f"pwr{n}"], label=f"line {n}")
+            ax.set_ylabel("Voltage (V)")
+            ax.grid()
+            ax.legend()
+
     def plot(self):
         self._plot_capacitors()
+        self._plot_cap_switches()
         self._plot_input_output()
+        self._plot_io_switches()
+        self._plot_power_lines()
 
-        plt.show()
+        plt.show(block=False)
+        input("Press enter to close figures...")
 
     def save(self):
         pass
