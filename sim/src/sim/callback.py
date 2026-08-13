@@ -46,7 +46,6 @@ class AssignmentModel:
     N: int
     K: int
     M: int
-    E_max: float
 
 
 def build_operators(N: int, K: int):
@@ -99,10 +98,11 @@ def build_model(
     N: int,
     K: int,
     M: int,
-    E_max: float,
+    caps: list[Capacitor],
     energy_costs: np.ndarray,
     leakage: np.ndarray,
     rewards: np.ndarray | None = None,
+    v_min: float = 1.6,
 ) -> AssignmentModel:
     """
     Build the sparse matrix representation of the assignment problem.
@@ -117,9 +117,6 @@ def build_model(
 
     M:
         Maximum number of selected power supplies.
-
-    E_max:
-        Total energy budget.
 
     energy_costs:
         Shape (N,). E_i = execution energy for task i.
@@ -137,22 +134,33 @@ def build_model(
     energy_costs = np.asarray(energy_costs, dtype=float)
     leakage = np.asarray(leakage, dtype=float)
 
-    # TODO: define feasibility
-    feasibility = np.asarray(feasibility, dtype=float)
-
     if energy_costs.shape != (N,):
         raise ValueError("energy_costs must have shape (N,)")
     if leakage.shape != (K,):
         raise ValueError("leakage must have shape (K,)")
+
+    E_allowed = np.zeros(K, dtype=float)
+    for i, cap in enumerate(caps):
+        c = cap.farads
+        v = cap.voltage
+        E_allowed[i] = c * (v**2 - v_min**2) / 2
+
+    assignment_energy = (
+        energy_costs[:, np.newaxis]
+        + leakage[np.newaxis, :]
+    )
+
+    feasibility = assignment_energy <= E_allowed[np.newaxis, :]
+
     if feasibility.shape != (N, K):
         raise ValueError("feasibility must have shape (N, K)")
 
-    # if rewards is None:
-    #     rewards = np.ones(N)
-    # rewards = np.asarray(rewards, dtype=float)
+    if rewards is None:
+        rewards = np.ones(N)
+    rewards = np.asarray(rewards, dtype=float)
 
-    # if rewards.shape != (N,):
-    #     raise ValueError("rewards must have shape (N,)")
+    if rewards.shape != (N,):
+        raise ValueError("rewards must have shape (N,)")
 
     M1, M2, M3, M4 = build_operators(N, K)
 
@@ -260,7 +268,6 @@ def build_model(
         N=N,
         K=K,
         M=M,
-        E_max=E_max,
     )
 
 
@@ -330,53 +337,53 @@ def solve_with_ortools(
 
 
 class LeacSimConfig(CapacitorStorageSimConfig):
+    def __init__(self, src, caps, sink, K, energy_costs, leakage, cap_limit):
+        super().__init__(src, caps, sink, K)
+        self.energy_costs = energy_costs
+        self.leakage = leakage
+        self.cap_limit = cap_limit
+
     def callback(self, time: float):
+        model = build_model(
+            N=len(self.energy_costs),
+            K=len(self.caps),
+            M=self.cap_limit,
+            caps=self.caps,
+            energy_costs=self.energy_costs,
+            leakage=self.leakage,
+        )
 
-        costs = self.get_costs(self.caps)
+        print("A shape:", model.A.shape)
+        print("A nonzeros:", model.A.nnz)
 
-    # Call once at start and hold - avoid recomputing
-    def get_costs(self, caps: list[Capacitor]):
-
-        # TODO: define task_costs w/ John, Steve
-
-        costs = [[float('inf')]*len(tasks)]*len(caps)
-        for j, cap in enumerate(caps):
-            for i, cost in enumerate(task_costs):
-                costs[i,j] = cost
-        return costs
+        for solver_name in [
+            "CBC_MIXED_INTEGER_PROGRAMMING",
+            "GLOP",
+            "PDLP",
+        ]:
+            result = solve_with_ortools(model, solver_name)
+            print(
+                solver_name,
+                "solution =", result["solution"], ","
+                "objective =", result["objective"], ",",
+                "time_ms =", result["wall_time_ms"]
+            )
 
 
 if __name__ == "__main__":
     # Small example.
-    N = 5
-    K = 3
     M = 2
-    E_max = 10.0
 
+    cap_values = [1e-6, 10e-6, 100e-6]
+
+    src = Source()
+    caps = [Capacitor(c) for c in cap_values]
+    sink = Sink()
     energy_costs = np.array([1.0, 2.0, 1.5, 3.0, 2.5])
-    leakage = np.array([0.5, 0.2, 0.8])
+    leakage = np.array([0.2, 0.5, 0.8])
 
-    model = build_model(
-        N=N,
-        K=K,
-        M=M,
-        E_max=E_max,
-        energy_costs=energy_costs,
-        leakage=leakage,
-    )
+    config = LeacSimConfig(src, caps, sink, len(caps), energy_costs, leakage, M)
 
-    print("A shape:", model.A.shape)
-    print("A nonzeros:", model.A.nnz)
-
-    for solver_name in [
-        "CBC_MIXED_INTEGER_PROGRAMMING",
-        "GLOP",
-        "PDLP",
-    ]:
-        result = solve_with_ortools(model, solver_name)
-        print(
-            solver_name,
-            "solution =", result["solution"], ","
-            "objective =", result["objective"], ",",
-            "time_ms =", result["wall_time_ms"]
-        )
+    sim = CapacitorStorageSim(config)
+    sim.run()
+    sim.plot()
