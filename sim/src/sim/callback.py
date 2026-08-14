@@ -52,13 +52,13 @@ def build_operators(N: int, K: int):
     """Construct M1, M2, M3, M4 as sparse matrices."""
     n = K * (N + 1)
 
-    # M1 extracts y from z = [x; y].
+    # M1 projects y from z = [x; y].
     M1 = sp.block_diag(
         (sp.csr_matrix((K, K)), sp.eye(K * N, format="csr")),
         format="csr",
     )
 
-    # M2 extracts x from z.
+    # M2 projects x from z.
     M2 = sp.block_diag(
         (sp.eye(K, format="csr"), sp.csr_matrix((K * N, K * N))),
         format="csr",
@@ -103,6 +103,7 @@ def build_model(
     leakage: np.ndarray,
     rewards: np.ndarray | None = None,
     v_min: float = 1.6,
+    v_max: float = 3.3
 ) -> AssignmentModel:
     """
     Build the sparse matrix representation of the assignment problem.
@@ -151,6 +152,7 @@ def build_model(
     )
 
     feasibility = assignment_energy <= E_allowed[np.newaxis, :]
+    # print(feasibility)
 
     if feasibility.shape != (N, K):
         raise ValueError("feasibility must have shape (N, K)")
@@ -323,11 +325,17 @@ def solve_with_ortools(
     objective.SetMaximization()
 
     status = solver.Solve()
+    if status == pywraplp.Solver.OPTIMAL:
+        stat_str = "OPTIMAL"
+    elif status == pywraplp.Solver.FEASIBLE:
+        stat_str = "FEASIBLE"
+    else:
+        stat_str = "NO_SOLUTION"
 
     solution = np.array([variable.solution_value() for variable in z])
 
     return {
-        "status": status,
+        "status": stat_str,
         "objective": objective.Value(),
         "solution": solution,
         "wall_time_ms": solver.wall_time(),
@@ -337,37 +345,90 @@ def solve_with_ortools(
 
 
 class LeacSimConfig(CapacitorStorageSimConfig):
-    def __init__(self, src, caps, sink, K, energy_costs, leakage, cap_limit):
-        super().__init__(src, caps, sink, K)
+    def __init__(
+        self,
+        src,
+        caps,
+        sink,
+        plines,
+        energy_costs,
+        leakage,
+        cap_limit,
+        v_min,
+        v_max,
+    ):
+        super().__init__(src, caps, sink, plines)
         self.energy_costs = energy_costs
         self.leakage = leakage
         self.cap_limit = cap_limit
+        self.v_min = v_min
+        self.v_max = v_max
+
 
     def callback(self, time: float):
-        model = build_model(
-            N=len(self.energy_costs),
-            K=len(self.caps),
-            M=self.cap_limit,
-            caps=self.caps,
-            energy_costs=self.energy_costs,
-            leakage=self.leakage,
-        )
 
-        print("A shape:", model.A.shape)
-        print("A nonzeros:", model.A.nnz)
+        if time == 0:
+            for cap in self.caps:
+                cap.connect(0)
+            self.src.connect(0)
+            self.sink.connect(1)
 
-        for solver_name in [
-            "CBC_MIXED_INTEGER_PROGRAMMING",
-            "GLOP",
-            "PDLP",
-        ]:
-            result = solve_with_ortools(model, solver_name)
-            print(
-                solver_name,
-                "solution =", result["solution"], ","
-                "objective =", result["objective"], ",",
-                "time_ms =", result["wall_time_ms"]
+        for cap in self.caps:
+            if cap.state(1):
+                cap.connect(0)
+                cap.disconnect(1)
+
+        count = 0
+        for cap in self.caps:
+            if cap.voltage < self.v_max:
+                pass
+            else:
+                count += 1
+
+        if count >= self.cap_limit:
+            # print('optimizing!')
+            model = build_model(
+                N=len(self.energy_costs),
+                K=len(self.caps),
+                M=self.cap_limit,
+                caps=self.caps,
+                energy_costs=self.energy_costs,
+                leakage=self.leakage,
+                v_min=self.v_min,
+                v_max=self.v_max
             )
+
+            for solver_name in [
+                "CBC_MIXED_INTEGER_PROGRAMMING",  # exact MIP solver
+                # "GLOP",  # linear relaxation, simplex/barrier method
+                # "PDLP",  # linear relaxation, gradient-based method
+            ]:
+                result = solve_with_ortools(model, solver_name)
+                print(
+                    f"Wake @ time: {time:.06f}:",
+                    "\n     status =", result["status"],
+                    "\n     objective =", result["objective"],
+                    "\n     solution =", result["solution"],
+                    "\n     time_ms =", result["wall_time_ms"],
+                    "\n     iterations =", result["iterations"],
+                )
+                if solver_name == "CBC_MIXED_INTEGER_PROGRAMMING":
+                    print(
+                        "     nodes =", result["nodes"]
+                    )
+                sol = result["solution"].reshape(
+                    len(self.energy_costs) + 1,
+                    len(self.caps)
+                )
+                for i, row in enumerate(sol):
+                    if i:
+                        inds = np.nonzero(row)  # at most one 1 per row
+                        # print(inds)
+                        if self.caps[inds[0][0]].state(0):
+                            self.caps[inds[0][0]].disconnect(0)
+                            self.caps[inds[0][0]].connect(1)
+                        elif self.caps[inds[0][0]].state(1):
+                            pass
 
 
 if __name__ == "__main__":
@@ -379,10 +440,20 @@ if __name__ == "__main__":
     src = Source()
     caps = [Capacitor(c) for c in cap_values]
     sink = Sink()
-    energy_costs = np.array([1.0, 2.0, 1.5, 3.0, 2.5])
-    leakage = np.array([0.2, 0.5, 0.8])
+    energy_costs = np.array([1.0e-6, 2.0e-6, 1.5e-6, 3.0e-6, 2.5e-6])
+    leakage = np.array([0.2e-6, 0.5e-6, 0.8e-6])
 
-    config = LeacSimConfig(src, caps, sink, len(caps), energy_costs, leakage, M)
+    config = LeacSimConfig(
+        src,
+        caps,
+        sink,
+        2,
+        energy_costs,
+        leakage,
+        M,
+        0.2,
+        0.6
+    )
 
     sim = CapacitorStorageSim(config)
     sim.run()
