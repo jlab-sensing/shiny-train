@@ -1,0 +1,44 @@
+{
+  "custom_cursors": 2,
+  "last_sch_text_sim_command": "",
+  "tabs": [
+    {
+      "analysis": "TRAN",
+      "commands": [
+        ".tran 1n 1 0 1m uic",
+        ".kicad adjustpaths",
+        ".save all",
+        ".probe alli",
+        ".probe allp"
+      ],
+      "dottedSecondary": true,
+      "margins": {
+        "bottom": 45,
+        "left": 70,
+        "right": 160,
+        "top": 30
+      },
+      "measurements": [
+        {
+          "expr": "INTEG V(output)",
+          "format": "3~V.s"
+        }
+      ],
+      "showGrid": true,
+      "traces": [
+        {
+          "color": "rgb(255, 255, 51)",
+          "signal": "P(R1)",
+          "trace_type": 272
+        },
+        {
+          "color": "rgb(228, 26, 28)",
+          "signal": "V(output)",
+          "trace_type": 257
+        }
+      ]
+    }
+  ],
+  "user_defined_signals": [],
+  "version": 7
+}
