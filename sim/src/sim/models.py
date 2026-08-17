@@ -211,7 +211,8 @@ class CapacitorStorageSimConfig:
 
 class CapacitorStorageSim:
     class CustomShared(NgSpiceShared):
-        """Class that takes in a callback and updates the current state of the
+        """
+        Class that takes in a callback and updates the current state of the
         switches.
 
         The functions `get_vsrc_data` / `get_isrc_data` are called for every
@@ -220,7 +221,8 @@ class CapacitorStorageSim:
         The simulation starts at time zero.
 
         The callback function has parameters time and voltages of each
-        capacitor. It returns a tuple for the load switch and switch state list
+        capacitor.
+        It returns a tuple for the load switch and switch state list
         that includes all capacitors.
         """
 
@@ -279,9 +281,10 @@ class CapacitorStorageSim:
             Actual data example
                 data =
                 {'vinput#branch': 0j, 'v0#branch': 0j, 'v1#branch': 0j,
-                'l.x0.l1#branch': 0j, 'l.x1.l1#branch': 0j, 'x1.3': 0j, 'x1.2': 0j,
-                'c1+': 0j, 'vsw1+': 0j, 'x0.3': 0j, 'x0.2': 0j, 'c0+': 0j, 'vsw0+':
-                0j, 'output': 0j, 'input': 0j, 'time': (2e-05+0j)}
+                'l.x0.l1#branch': 0j, 'l.x1.l1#branch': 0j, 'x1.3': 0j,
+                'x1.2': 0j, 'c1+': 0j, 'vsw1+': 0j, 'x0.3': 0j, 'x0.2': 0j,
+                'c0+': 0j, 'vsw0+': 0j, 'output': 0j, 'input': 0j,
+                'time': (2e-05+0j)}
             """
 
             for idx, cap in enumerate(self.config.caps):
@@ -311,8 +314,9 @@ class CapacitorStorageSim:
     def _create_circuit(self, model: str = "C_real") -> Circuit:
         """Creates the circuit model.
 
-        Available fields for model is "C_real" and "C_ideal". At time of writing
-        the capacitor model incorperates "Resr", "Rleak", "Cval", "fo".
+        Available fields for model is "C_real" and "C_ideal".
+        At time of writing the capacitor model incorperates:
+            "Resr", "Rleak", "Cval", "fo".
 
         Args:
             model: Capacitor model
@@ -495,13 +499,15 @@ class CapacitorStorageSim:
 
         for n in range(self.config.p_lines):
             axs[ax_idx].plot(
-                self.analysis[f"ctrl_src_pwr{n}_pos"], label=f"source, line {n}"
+                self.analysis[f"ctrl_src_pwr{n}_pos"],
+                label=f"source, line {n}"
             )
             ax_idx += 1
 
         for n in range(self.config.p_lines):
             axs[ax_idx].plot(
-                self.analysis[f"ctrl_pwr{n}_sink_pos"], label=f"sink, line {n}"
+                self.analysis[f"ctrl_pwr{n}_sink_pos"],
+                label=f"sink, line {n}"
             )
             ax_idx += 1
 
@@ -546,12 +552,16 @@ class SineShared(NgSpiceShared):
         self._pulsation = float(frequency.pulsation)
 
     def get_vsrc_data(self, voltage, time, node, ngspice_id):
-        self._logger.debug(f"ngspice_id-{ngspice_id} get_vsrc_data @{time} node {node}")
+        self._logger.debug(
+            f"ngspice_id-{ngspice_id} get_vsrc_data @{time} node {node}"
+        )
         voltage[0] = self._amplitude * math.sin(self._pulsation * time)
         return 0
 
     def get_isrc_data(self, current, time, node, ngspice_id):
-        self._logger.debug(f"ngspice_id-{ngspice_id} get_isrc_data @{time} node {node}")
+        self._logger.debug(
+            f"ngspice_id-{ngspice_id} get_isrc_data @{time} node {node}"
+        )
         current[0] = 1.0
         return 0
 
