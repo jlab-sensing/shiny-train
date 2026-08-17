@@ -111,25 +111,35 @@ class ConstantSource(Source):
 
 
 class SineSource(Source):
-    def __init__(self, source_am, source_os, source_hz, source_ph, time, sample_hz, **kwargs):
+    def __init__(self, source_amplitude, source_hz, source_ph, time, sample_hz, **kwargs):
         super().__init__(**kwargs)
         self.source_am = source_am      # source amplitude in Volts
-        self.source_os = source_os      # source offset in Volts
         self.source_hz = source_hz      # frequency of the source in Hz
         self.source_ph = source_ph      # phase offset of the source, in radians
         self.time = time                # length of the power trace in seconds
         self.sample_hz = sample_hz      # sampling frequency in Hz
 
     def load_data(self):
-        steps = self.time * self.sample_hz
-        ts = np.linspace(0, self.time, steps)
+        steps = int(self.time * self.sample_hz)
+
+        # Elapsed time in seconds, used for generating the waveform
+        ts = np.linspace(0, self.time, steps, endpoint=False)
+
+        # Datetime timestamps
+        timestamps = pd.date_range(
+            start=pd.Timestamp.now(),
+            periods=steps,
+            freq=pd.Timedelta(seconds=1 / self.sample_hz)
+        )
+
+        # Generate voltage
         vs = np.sin(2 * np.pi * self.source_hz * ts + self.source_ph)
         vs *= self.source_amplitude
-        data = np.vstack((ts, vs)).T
-        self.data = pd.DataFrame(
-            array,
-            columns=['Time(s)', 'Potential(V)']
-        )
+
+        self.data = pd.DataFrame({
+            'Timestamp': timestamps,
+            'Potential(V)': vs
+        })
 
 
 class Sink(SwitchedComponent):
@@ -138,14 +148,9 @@ class Sink(SwitchedComponent):
     def __init__(self):
         pass
 
-class SimpleSMSink(Sink):
-    """
-    Implement an M-state, single-transition-per-state, state machine
-    """
-    def __init__(self, M, **kwargs):
-        super().__init__(**kwargs)
-        self.states = [i for i in range(M)]
-
+class SMSink(Sink):
+    def __init__(self, **kwargs):
+        pass
 
 
 class CapacitorStorageSimConfig:
