@@ -310,12 +310,18 @@ class CapacitorStorageSim:
             )
 
             # TODO Update to configured power source
+            # this is constant
             if node == "v_src":
-                voltage[0] = 1
+                voltage[0] = self.config.source.get_voltage()
 
-            # TODO Update for constant sink power
-            if node == "sink":
-                pass
+            # TODO update power source. Voltage equals power.
+            if node == "v_pwr_src":
+                voltage[0] = self.config.source.get_power(time)
+
+            # TODO Update for constant sink power. Voltage equals power.
+            if node == "v_pwr_sink":
+                # TODO check sink power state and set deep sleep
+                voltage[0] = self.config.sink.get_power(time)
 
             # configure switches
             for n in range(self.config.p_lines):
@@ -382,6 +388,10 @@ class CapacitorStorageSim:
 
         self.shared = self.CustomShared(config, send_data=True)
 
+        # limited min/max resistance for load
+        self.load_min_r = 1e-9
+        self.load_max_r = 1e9
+
     def _create_circuit(self, model: str = "C_real") -> Circuit:
         """Creates the circuit model.
 
@@ -405,11 +415,18 @@ class CapacitorStorageSim:
         # on resistance = 1 Ohm
         circuit.model("S", "SW", vt=1, ron=1)
 
-        # input source
-        circuit.V("_src", "v_src_pos", circuit.gnd, "dc 0 external")
-        circuit.R(1, "v_src_pos", "src", 2.2 @ u_kOhm)
 
-        # circuit.V("src") creates an element like Vsrc
+        # old input model
+        #circuit.V("_src", "v_src_pos", circuit.gnd, "dc 0 external")
+        #circuit.R(1, "v_src_pos", "src", 2.2 @ u_kOhm)
+
+        # input source
+        # TODO Chance to the param for constant voltage source
+        circuit.V("_src", "v_src_pos", circuit.gnd, "dc 0 external")
+
+        circuit.V("_pwr_source", "v_pwr_source", circuit.gnd, "dc 0 external")
+        circuit.raw_spice += "R1 v_src_pos src {V(output)**2/v_pwr_source}\n"
+
 
         # input power switches
         for n in range(self.config.p_lines):
@@ -469,8 +486,12 @@ class CapacitorStorageSim:
                 model="S",
             )
 
-        # resistive load
-        circuit.R(2, "sink", circuit.gnd, 200 @ u_Ohm)
+        # old resistive load
+        #circuit.R(2, "sink", circuit.gnd, 200 @ u_Ohm)
+
+        # new voltage controlled resistive load
+        circuit.V("_pwr_sink", "v_pwr_sink", circuit.gnd, "dc 0 external")
+        circuit.raw_spice += f"R1 sink gnd {{limit({self.load_min_r},V(v_pwr_sink)**2/0.01,{self.load_max_r})}}\n"
 
         return circuit
 
@@ -600,6 +621,23 @@ class CapacitorStorageSim:
         for ax, n in zip(axs, range(self.config.p_lines)):
             ax.plot(self.analysis[f"pwr{n}"], label=f"line {n}")
             ax.set_ylabel("Voltage (V)")
+            ax.grid()
+            ax.legend()
+
+    def _plot_src_sink_power(self):
+        _, axs = plt.subplots(2, 1, sharex=True)
+
+        axs[0].set_title("Source/Sink Power")
+
+        axs[0].plot(self.analysis["v_pwr_src"], label="src")
+        axs[1].plot(self.analysis["v_pwr_sink"], label="sink")
+
+        for ax in axs:
+            ax.set_ylabel("Power (W)")
+
+        axs[1].set_xlabel("Time (ms)")
+
+        for ax in axs:
             ax.grid()
             ax.legend()
 
