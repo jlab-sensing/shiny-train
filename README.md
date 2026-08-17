@@ -11,9 +11,9 @@
 
 The source is modeled as a constant voltage source with a variable resistor to keep the power at a constant level.
 
-![sources circuit](./sources/circuit.jpg)
+![sources circuit](./source/circuit.jpg)
 
-![sources traces](./sources/traces.jpg)
+![sources traces](./source/traces.png)
 
 
 ### Sink
@@ -22,4 +22,4 @@ The sink is modeled as a variable resistor to draw constant power. The voltage a
 
 ![sink circuit](./sink/circuit.jpg)
 
-![sink traces](./sink/traces.jpg)
+![sink traces](./sink/traces.png)
