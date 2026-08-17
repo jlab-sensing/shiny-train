@@ -333,6 +333,10 @@ def solve_with_ortools(
         stat_str = "NO_SOLUTION"
 
     solution = np.array([variable.solution_value() for variable in z])
+    if solver_name=="CBC_MIXED_INTEGER_PROGRAMMING":
+        nodes = nodes = solver.nodes()
+    else:
+        nodes = None
 
     return {
         "status": stat_str,
@@ -340,7 +344,7 @@ def solve_with_ortools(
         "solution": solution,
         "wall_time_ms": solver.wall_time(),
         "iterations": solver.iterations(),
-        "nodes": solver.nodes() if solver_name=="CBC_MIXED_INTEGER_PROGRAMMING" else None,
+        "nodes": nodes
     }
 
 
