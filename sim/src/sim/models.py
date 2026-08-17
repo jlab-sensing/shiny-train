@@ -120,15 +120,26 @@ class SineSource(Source):
         self.sample_hz = sample_hz      # sampling frequency in Hz
 
     def load_data(self):
-        steps = self.time * self.sample_hz
-        ts = np.linspace(0, self.time, steps)
+        steps = int(self.time * self.sample_hz)
+
+        # Elapsed time in seconds, used for generating the waveform
+        ts = np.linspace(0, self.time, steps, endpoint=False)
+
+        # Datetime timestamps
+        timestamps = pd.date_range(
+            start=pd.Timestamp.now(),
+            periods=steps,
+            freq=pd.Timedelta(seconds=1 / self.sample_hz)
+        )
+
+        # Generate voltage
         vs = np.sin(2 * np.pi * self.source_hz * ts + self.source_ph)
         vs *= self.source_amplitude
-        data = np.vstack((ts, vs)).T
-        self.data = pd.DataFrame(
-            array,
-            columns=['Time(s)', 'Potential(V)']
-        )
+
+        self.data = pd.DataFrame({
+            'Timestamp': timestamps,
+            'Potential(V)': vs
+        })
 
 
 class Sink(SwitchedComponent):
