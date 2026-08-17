@@ -91,7 +91,7 @@ class Source(SwitchedComponent, ABC):
         pass
 
 
-def ConstantSource(Source):
+class ConstantSource(Source):
     def __init__(self, source_amplitude, time, sample_hz, **kwargs):
         super().__init__(**kwargs)
         self.source_am = source_am      # source amplitude in Volts
@@ -110,10 +110,11 @@ def ConstantSource(Source):
         )
 
 
-def SineSource(Source):
-    def __init__(self, source_amplitude, source_hz, source_ph, time, sample_hz, **kwargs):
+class SineSource(Source):
+    def __init__(self, source_am, source_os, source_hz, source_ph, time, sample_hz, **kwargs):
         super().__init__(**kwargs)
         self.source_am = source_am      # source amplitude in Volts
+        self.source_os = source_os      # source offset in Volts
         self.source_hz = source_hz      # frequency of the source in Hz
         self.source_ph = source_ph      # phase offset of the source, in radians
         self.time = time                # length of the power trace in seconds
@@ -136,6 +137,15 @@ class Sink(SwitchedComponent):
     # TODO: step through states in callback
     def __init__(self):
         pass
+
+class SimpleSMSink(Sink):
+    """
+    Implement an M-state, single-transition-per-state, state machine
+    """
+    def __init__(self, M, **kwargs):
+        super().__init__(**kwargs)
+        self.states = [i for i in range(M)]
+
 
 
 class CapacitorStorageSimConfig:
