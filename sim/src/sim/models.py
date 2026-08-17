@@ -111,11 +111,21 @@ class ConstantSource(Source):
 
 
 class SineSource(Source):
-    def __init__(self, source_amplitude, source_hz, source_ph, time, sample_hz, **kwargs):
+    def __init__(
+        self,
+        source_am,
+        source_os,
+        source_hz,
+        source_ph,
+        time,
+        sample_hz,
+        **kwargs
+    ):
         super().__init__(**kwargs)
         self.source_am = source_am      # source amplitude in Volts
+        self.source_os = source_os      # source voltage offset in Volts
         self.source_hz = source_hz      # frequency of the source in Hz
-        self.source_ph = source_ph      # phase offset of the source, in radians
+        self.source_ph = source_ph      # phase offset of the source in radians
         self.time = time                # length of the power trace in seconds
         self.sample_hz = sample_hz      # sampling frequency in Hz
 
@@ -134,7 +144,8 @@ class SineSource(Source):
 
         # Generate voltage
         vs = np.sin(2 * np.pi * self.source_hz * ts + self.source_ph)
-        vs *= self.source_amplitude
+        vs *= self.source_am
+        vs += self.source_os
 
         self.data = pd.DataFrame({
             'Timestamp': timestamps,
@@ -148,8 +159,10 @@ class Sink(SwitchedComponent):
     def __init__(self):
         pass
 
+
 class SMSink(Sink):
     def __init__(self, **kwargs):
+        pass
 
 
 class CapacitorStorageSimConfig:
@@ -198,7 +211,7 @@ class CapacitorStorageSimConfig:
 
 class CapacitorStorageSim:
     class CustomShared(NgSpiceShared):
-        """Class that takes in a callback and determines the current state of the
+        """Class that takes in a callback and updates the current state of the
         switches.
 
         The functions `get_vsrc_data` / `get_isrc_data` are called for every
