@@ -211,7 +211,7 @@ class CapacitorStorageSimConfig:
 
 class CapacitorStorageSim:
     class CustomShared(NgSpiceShared):
-        """Class that takes in a callback and determines the current state of the
+        """Class that takes in a callback and updates the current state of the
         switches.
 
         The functions `get_vsrc_data` / `get_isrc_data` are called for every
