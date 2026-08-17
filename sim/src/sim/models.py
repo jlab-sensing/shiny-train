@@ -17,7 +17,10 @@ from PySpice.Spice.NgSpice.Shared import NgSpiceShared
 from PySpice.Unit import *
 
 
-caplib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cap.lib")
+caplib_path = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "cap.lib"
+)
 
 
 class SwitchedComponent:
