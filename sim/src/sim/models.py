@@ -100,14 +100,22 @@ class ConstantSource(Source):
 
     def load_data(self):
         steps = self.time * self.sample_hz
-        ts = np.linspace(0, self.time, steps)
-        vs = np.ones_like(ts)
-        vs *= self.source_amplitude
-        data = np.vstack((ts, vs)).T
-        self.data = pd.DataFrame(
-            array,
-            columns=['Time(s)', 'Potential(V)']
+
+        # Datetime timestamps
+        timestamps = pd.date_range(
+            start=pd.Timestamp.now(),
+            periods=steps,
+            freq=pd.Timedelta(seconds=1 / self.sample_hz)
         )
+
+        # Generate voltage
+        vs = np.ones(steps)
+        vs *= self.source_amplitude
+
+        self.data = pd.DataFrame({
+            'Timestamp': timestamps,
+            'Potential(V)': vs
+        })
 
 
 class SineSource(Source):
