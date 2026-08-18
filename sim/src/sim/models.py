@@ -8,6 +8,10 @@ import math
 import os
 
 import matplotlib.pyplot as plt
+import pandas as pd
+
+from math import pi, sin
+from abc import ABC, abstractmethod
 from PySpice.Spice.Netlist import Circuit
 from PySpice.Spice.NgSpice.Shared import NgSpiceShared
 from PySpice.Unit import *
@@ -68,13 +72,104 @@ class Capacitor(SwitchedComponent):
         self.voltage = 0
 
 
-class Source(SwitchedComponent):
+class Source(SwitchedComponent, ABC):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.data = None
+        self.load_data()
+
+    @abstractmethod
+    def load_data(self):
+        """
+        Subclasses must implement load_data, subject to the file types
+        they read from.
+
+        Output is a pandas dataframe with 2 columns: time and power harvested,
+        assigned to self.data
+        """
+
+        pass
+
+
+class ConstantSource(Source):
+    def __init__(self, source_amplitude, time, sample_hz, **kwargs):
+        super().__init__(**kwargs)
+        self.source_am = source_am      # source amplitude in Volts
+        self.time = time                # length of the power trace in seconds
+        self.sample_hz = sample_hz      # sampling frequency in Hz
+
+    def load_data(self):
+        steps = self.time * self.sample_hz
+
+        # Datetime timestamps
+        timestamps = pd.date_range(
+            start=pd.Timestamp.now(),
+            periods=steps,
+            freq=pd.Timedelta(seconds=1 / self.sample_hz)
+        )
+
+        # Generate voltage
+        vs = np.ones(steps)
+        vs *= self.source_amplitude
+
+        self.data = pd.DataFrame({
+            'Timestamp': timestamps,
+            'Potential(V)': vs
+        })
+
+
+class SineSource(Source):
+    def __init__(
+        self,
+        source_am,
+        source_os,
+        source_hz,
+        source_ph,
+        time,
+        sample_hz,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+        self.source_am = source_am      # source amplitude in Volts
+        self.source_os = source_os      # source voltage offset in Volts
+        self.source_hz = source_hz      # frequency of the source in Hz
+        self.source_ph = source_ph      # phase offset of the source in radians
+        self.time = time                # length of the power trace in seconds
+        self.sample_hz = sample_hz      # sampling frequency in Hz
+
+    def load_data(self):
+        steps = int(self.time * self.sample_hz)
+
+        # Elapsed time in seconds, used for generating the waveform
+        ts = np.linspace(0, self.time, steps, endpoint=False)
+
+        # Datetime timestamps
+        timestamps = pd.date_range(
+            start=pd.Timestamp.now(),
+            periods=steps,
+            freq=pd.Timedelta(seconds=1 / self.sample_hz)
+        )
+
+        # Generate voltage
+        vs = np.sin(2 * np.pi * self.source_hz * ts + self.source_ph)
+        vs *= self.source_am
+        vs += self.source_os
+
+        self.data = pd.DataFrame({
+            'Timestamp': timestamps,
+            'Potential(V)': vs
+        })
+
+
+class Sink(SwitchedComponent):
+    # TODO: subclass with computational state machine (states and costs)
+    # TODO: step through states in callback
     def __init__(self):
         pass
 
 
-class Sink(SwitchedComponent):
-    def __init__(self):
+class SMSink(Sink):
+    def __init__(self, **kwargs):
         pass
 
 
@@ -124,7 +219,7 @@ class CapacitorStorageSimConfig:
 
 class CapacitorStorageSim:
     class CustomShared(NgSpiceShared):
-        """Class that takes in a callback and determines the current state of the
+        """Class that takes in a callback and updates the current state of the
         switches.
 
         The functions `get_vsrc_data` / `get_isrc_data` are called for every
