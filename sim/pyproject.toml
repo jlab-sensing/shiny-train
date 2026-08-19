@@ -12,6 +12,7 @@ requires-python = ">=3.10"
 dependencies = [
     "spicelib",
     "PySpice",
+    "pandas"
 ]
 
 [project.optional-dependencies]
