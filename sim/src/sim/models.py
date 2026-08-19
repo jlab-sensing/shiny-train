@@ -9,12 +9,16 @@ import os
 
 import matplotlib.pyplot as plt
 import pandas as pd
+import numpy as np
 
 from math import pi, sin
 from abc import ABC, abstractmethod
 from PySpice.Spice.Netlist import Circuit
 from PySpice.Spice.NgSpice.Shared import NgSpiceShared
 from PySpice.Unit import *
+
+import PySpice
+from cffi import FFI
 
 
 caplib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cap.lib")
@@ -33,6 +37,7 @@ class SwitchedComponent:
             n: Number of swtiches
         """
 
+        self.n = n
         self._sw_arr = [0 for _ in range(n)]
 
     def connect(self, idx: int):
@@ -53,6 +58,11 @@ class SwitchedComponent:
 
         self._sw_arr[idx] = 0
 
+    def reset(self):
+        """Disconnects all switches."""
+
+        self._sw_arr = [0 for _ in range(self.n)]
+
     def state(self, idx: int) -> int:
         """Gets the current state of a switch.
 
@@ -67,14 +77,32 @@ class SwitchedComponent:
 
 
 class Capacitor(SwitchedComponent):
-    def __init__(self, farads: float):
+    def __init__(self, farads: float, initial_voltage: float = 0.):
+        """Initializes capacitor element.
+
+        Args:
+            farads: Farads
+            initial_voltage: Forced voltage at start of sim
+        """
+
         self.farads = farads
-        self.voltage = 0
+        self.initial_voltage = initial_voltage
+        self.voltage = 0.
 
 
 class Source(SwitchedComponent, ABC):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, duration: float, dt: float):
+        """Initialize power source.
+
+        Args:
+            duration: Length of power traces (s)
+            dt: Sampling period (ms)
+
+        """
+
+        self.duration = duration
+        self.dt = dt
+
         self.data = None
         self.load_data()
 
@@ -92,25 +120,39 @@ class Source(SwitchedComponent, ABC):
 
 
 class ConstantSource(Source):
-    def __init__(self, source_amplitude, time, sample_hz, **kwargs):
-        super().__init__(**kwargs)
-        self.source_am = source_am      # source amplitude in Volts
-        self.time = time                # length of the power trace in seconds
-        self.sample_hz = sample_hz      # sampling frequency in Hz
+    def __init__(self, voltage: float, **kwargs):
+        """Initial data for a constant voltage source.
+
+        Args:
+            voltage: Voltage in volts
+        """
+
+        self.voltage = voltage
+
+        # this init must be after setting variables that are used in load_data.
+        # The Source derived class calls the abstract method load_data so they
+        # have to be set before the super call.
+        Source.__init__(self, **kwargs)
 
     def load_data(self):
-        steps = self.time * self.sample_hz
+        #steps = self.duration * self.sample_hz
+
+        curr_time = pd.Timestamp.now()
+
+        start = curr_time
+        end = curr_time + pd.Timedelta(self.duration, "s")
 
         # Datetime timestamps
         timestamps = pd.date_range(
-            start=pd.Timestamp.now(),
-            periods=steps,
-            freq=pd.Timedelta(seconds=1 / self.sample_hz)
+            start=start,
+            end=end,
+            #periods=steps,
+            freq=pd.Timedelta(self.dt, "ms")
         )
 
         # Generate voltage
-        vs = np.ones(steps)
-        vs *= self.source_amplitude
+        vs = np.ones(len(timestamps))
+        vs *= self.voltage
 
         self.data = pd.DataFrame({
             'Timestamp': timestamps,
@@ -125,29 +167,40 @@ class SineSource(Source):
         source_os,
         source_hz,
         source_ph,
-        time,
-        sample_hz,
         **kwargs
     ):
-        super().__init__(**kwargs)
-        self.source_am = source_am      # source amplitude in Volts
-        self.source_os = source_os      # source voltage offset in Volts
-        self.source_hz = source_hz      # frequency of the source in Hz
-        self.source_ph = source_ph      # phase offset of the source in radians
-        self.time = time                # length of the power trace in seconds
-        self.sample_hz = sample_hz      # sampling frequency in Hz
+        """Initializes the SineSource
+
+        Args:
+            source_am: source amplitude (V)
+            source_os: source voltage offset (V)
+            source_hz: frequency of the source (Hz)
+            source_ph: phase offset of the source in radians
+        """
+
+        self.source_am = source_am
+        self.source_os = source_os
+        self.source_hz = source_hz
+        self.source_ph = source_ph
+
+        # this init must be after setting variables that are used in load_data.
+        # The Source derived class calls the abstract method load_data so they
+        # have to be set before the super call.
+        Source.__init__(self, **kwargs)
+
 
     def load_data(self):
-        steps = int(self.time * self.sample_hz)
+        sample_hz = 1 / self.dt
+        steps = int(self.duration * sample_hz)
 
         # Elapsed time in seconds, used for generating the waveform
-        ts = np.linspace(0, self.time, steps, endpoint=False)
+        ts = np.linspace(0, self.duration, steps, endpoint=False)
 
         # Datetime timestamps
         timestamps = pd.date_range(
             start=pd.Timestamp.now(),
             periods=steps,
-            freq=pd.Timedelta(seconds=1 / self.sample_hz)
+            freq=pd.Timedelta(seconds=1 / sample_hz)
         )
 
         # Generate voltage
@@ -205,6 +258,14 @@ class CapacitorStorageSimConfig:
         for cap in caps:
             SwitchedComponent.__init__(cap, p_lines)
 
+    def reset(self):
+        """Disconnect all switches."""
+
+        self.src.reset()
+        for cap in self.caps:
+            cap.reset()
+        self.sink.reset()
+
     def callback(self, time: float):
         """Callback function to perform actions during sim runtime.
 
@@ -234,6 +295,11 @@ class CapacitorStorageSim:
 
         def __init__(self, config: CapacitorStorageSimConfig, **kwargs):
             """Sets the callback function."""
+
+            # This line allows for mulitple instantiations of ngspice. See
+            # following for source.
+            # https://github.com/PySpice-org/PySpice/pull/94
+            PySpice.Spice.NgSpice.Shared.ffi = FFI()
 
             super().__init__(**kwargs)
             self.config = config
@@ -417,9 +483,16 @@ class CapacitorStorageSim:
             ngspice_shared=self.shared,
         )
 
+        # Initial conditions
+        ic_kwargs = {}
+        for idx, cap in enumerate(self.config.caps):
+            ic_kwargs[f"c{idx}_pos"] = cap.initial_voltage
+        simulator.initial_condition(**ic_kwargs)
+
         analysis = simulator.transient(
-            step_time=1 @ u_ms,
-            end_time=2 @ u_s,
+            step_time=self.config.src.dt @ u_ms,
+            end_time=self.config.src.duration @ u_s,
+            use_initial_condition=True,
         )
 
         return analysis
@@ -431,9 +504,8 @@ class CapacitorStorageSim:
             caps: Capacitor array values
         """
 
-        circuit = self._create_circuit()
-        print(circuit)
-        self.analysis = self._simulate(circuit)
+        self.circuit = self._create_circuit()
+        self.analysis = self._simulate(self.circuit)
 
     def _plot_capacitors(self):
         _, axs = plt.subplots(len(self.config.caps), 1, sharex=True)
