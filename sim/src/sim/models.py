@@ -485,9 +485,8 @@ class CapacitorStorageSim:
             caps: Capacitor array values
         """
 
-        circuit = self._create_circuit()
-        print(circuit)
-        self.analysis = self._simulate(circuit)
+        self.circuit = self._create_circuit()
+        self.analysis = self._simulate(self.circuit)
 
     def _plot_capacitors(self):
         _, axs = plt.subplots(len(self.config.caps), 1, sharex=True)

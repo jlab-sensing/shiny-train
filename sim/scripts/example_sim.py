@@ -47,5 +47,6 @@ sink = Sink()
 config = MyConfig(src, caps, sink, len(caps))
 
 sim = CapacitorStorageSim(config)
+print(sim.circuit)
 sim.run()
 sim.plot()
