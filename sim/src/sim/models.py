@@ -33,6 +33,7 @@ class SwitchedComponent:
             n: Number of swtiches
         """
 
+        self.n = n
         self._sw_arr = [0 for _ in range(n)]
 
     def connect(self, idx: int):
@@ -52,6 +53,11 @@ class SwitchedComponent:
         """
 
         self._sw_arr[idx] = 0
+
+    def reset(self):
+        """Disconnects all switches."""
+
+        self._sw_arr = [0 for _ in range(self.n)]
 
     def state(self, idx: int) -> int:
         """Gets the current state of a switch.
@@ -204,6 +210,14 @@ class CapacitorStorageSimConfig:
         SwitchedComponent.__init__(sink, p_lines)
         for cap in caps:
             SwitchedComponent.__init__(cap, p_lines)
+
+    def reset(self):
+        """Disconnect all switches."""
+
+        self.src.reset()
+        for cap in self.caps:
+            cap.reset()
+        self.sink.reset()
 
     def callback(self, time: float):
         """Callback function to perform actions during sim runtime.
