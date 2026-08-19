@@ -80,5 +80,13 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
+      - name: Install ngspice
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ngspice ngspice-dev libngspice0 libngspice0-dev
+
       - name: Install package
         run: pip3 install .
+
+      - name: Run tests
+        run: python -m unittest
