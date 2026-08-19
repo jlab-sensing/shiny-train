@@ -17,6 +17,9 @@ from PySpice.Spice.Netlist import Circuit
 from PySpice.Spice.NgSpice.Shared import NgSpiceShared
 from PySpice.Unit import *
 
+import PySpice
+from cffi import FFI
+
 
 caplib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cap.lib")
 
@@ -281,6 +284,11 @@ class CapacitorStorageSim:
 
         def __init__(self, config: CapacitorStorageSimConfig, **kwargs):
             """Sets the callback function."""
+
+            # This line allows for mulitple instantiations of ngspice. See
+            # following for source.
+            # https://github.com/PySpice-org/PySpice/pull/94
+            PySpice.Spice.NgSpice.Shared.ffi = FFI()
 
             super().__init__(**kwargs)
             self.config = config
