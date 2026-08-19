@@ -9,6 +9,7 @@ import os
 
 import matplotlib.pyplot as plt
 import pandas as pd
+import numpy as np
 
 from math import pi, sin
 from abc import ABC, abstractmethod
@@ -79,7 +80,18 @@ class Capacitor(SwitchedComponent):
 
 
 class Source(SwitchedComponent, ABC):
-    def __init__(self):
+    def __init__(self, duration: float, dt: float):
+        """Initialize power source.
+
+        Args:
+            duration: Length of power traces (s)
+            dt: Sampling period (ms)
+
+        """
+
+        self.duration = duration
+        self.dt = dt
+
         self.data = None
         self.load_data()
 
@@ -97,32 +109,39 @@ class Source(SwitchedComponent, ABC):
 
 
 class ConstantSource(Source):
-    def __init__(self, voltage: float, duration: float, dt: float):
+    def __init__(self, voltage: float, **kwargs):
         """Initial data for a constant voltage source.
 
         Args:
             voltage: Voltage in volts
-            duration: Length of power traces in seconds
-            dt: Sampling period
         """
 
-        self.source_am = voltage
-        self.time = duration
-        self.sample_hz = dt
+        self.voltage = voltage
+
+        # this init must be after setting variables that are used in load_data.
+        # The Source derived class calls the abstract method load_data so they
+        # have to be set before the super call.
+        Source.__init__(self, **kwargs)
 
     def load_data(self):
-        steps = self.time * self.sample_hz
+        #steps = self.duration * self.sample_hz
+
+        curr_time = pd.Timestamp.now()
+
+        start = curr_time
+        end = curr_time + pd.Timedelta(self.duration, "s")
 
         # Datetime timestamps
         timestamps = pd.date_range(
-            start=pd.Timestamp.now(),
-            periods=steps,
-            freq=pd.Timedelta(seconds=1 / self.sample_hz)
+            start=start,
+            end=end,
+            #periods=steps,
+            freq=pd.Timedelta(self.dt, "ms")
         )
 
         # Generate voltage
-        vs = np.ones(steps)
-        vs *= self.source_amplitude
+        vs = np.ones(len(timestamps))
+        vs *= self.voltage
 
         self.data = pd.DataFrame({
             'Timestamp': timestamps,
@@ -438,8 +457,8 @@ class CapacitorStorageSim:
         )
 
         analysis = simulator.transient(
-            step_time=1 @ u_ms,
-            end_time=2 @ u_s,
+            step_time=self.config.src.dt @ u_ms,
+            end_time=self.config.src.duration @ u_s,
         )
 
         return analysis
