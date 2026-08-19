@@ -31,7 +31,7 @@ from sim.models import (
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
     Sink,
-    Source,
+    ConstantSource,
 )
 
 
@@ -389,50 +389,52 @@ class LeacSimConfig(CapacitorStorageSimConfig):
             else:
                 count += 1
 
-        if count >= self.cap_limit:
-            # print('optimizing!')
-            model = build_model(
-                N=len(self.energy_costs),
-                K=len(self.caps),
-                M=self.cap_limit,
-                caps=self.caps,
-                energy_costs=self.energy_costs,
-                leakage=self.leakage,
-                v_min=self.v_min,
-                v_max=self.v_max
-            )
+            if count >= self.cap_limit:
+                # print('optimizing!')
+                model = build_model(
+                    N=len(self.energy_costs),
+                    K=len(self.caps),
+                    M=self.cap_limit,
+                    caps=self.caps,
+                    energy_costs=self.energy_costs,
+                    leakage=self.leakage,
+                    v_min=self.v_min,
+                    v_max=self.v_max
+                )
 
-            for solver_name in [
-                "CBC_MIXED_INTEGER_PROGRAMMING",  # exact MIP solver
-                # "GLOP",  # linear relaxation, simplex/barrier method
-                # "PDLP",  # linear relaxation, gradient-based method
-            ]:
-                result = solve_with_ortools(model, solver_name)
-                print(
-                    f"Wake @ time: {time:.06f}:",
-                    "\n     status =", result["status"],
-                    "\n     objective =", result["objective"],
-                    "\n     solution =", result["solution"],
-                    "\n     time_ms =", result["wall_time_ms"],
-                    "\n     iterations =", result["iterations"],
-                )
-                if solver_name == "CBC_MIXED_INTEGER_PROGRAMMING":
+                for solver_name in [
+                    "CBC_MIXED_INTEGER_PROGRAMMING",  # exact MIP solver
+                    # "GLOP",  # linear relaxation, simplex/barrier method
+                    # "PDLP",  # linear relaxation, gradient-based method
+                ]:
+                    result = solve_with_ortools(model, solver_name)
                     print(
-                        "     nodes =", result["nodes"]
+                        f"Wake @ time: {time:.06f}:",
+                        "\n     status =", result["status"],
+                        "\n     objective =", result["objective"],
+                        "\n     solution =", result["solution"],
+                        "\n     time_ms =", result["wall_time_ms"],
+                        "\n     iterations =", result["iterations"],
                     )
-                sol = result["solution"].reshape(
-                    len(self.energy_costs) + 1,
-                    len(self.caps)
-                )
-                for i, row in enumerate(sol):
-                    if i:
-                        inds = np.nonzero(row)  # at most one 1 per row
-                        # print(inds)
-                        if self.caps[inds[0][0]].state(0):
-                            self.caps[inds[0][0]].disconnect(0)
-                            self.caps[inds[0][0]].connect(1)
-                        elif self.caps[inds[0][0]].state(1):
-                            pass
+                    if solver_name == "CBC_MIXED_INTEGER_PROGRAMMING":
+                        print(
+                            "     nodes =", result["nodes"]
+                        )
+                    sol = result["solution"].reshape(
+                        len(self.energy_costs) + 1,
+                        len(self.caps)
+                    )
+                    for i, row in enumerate(sol):
+                        if i:
+                            inds = np.nonzero(row)  # at most one 1 per row
+                            # print(inds)
+                            if self.caps[inds[0][0]].state(0):
+                                self.caps[inds[0][0]].disconnect(0)
+                                self.caps[inds[0][0]].connect(1)
+                            elif self.caps[inds[0][0]].state(1):
+                                pass
+
+            # TODO: implement Sink state machine state changes here
 
 
 if __name__ == "__main__":
@@ -441,7 +443,7 @@ if __name__ == "__main__":
 
     cap_values = [1e-6, 10e-6, 100e-6]
 
-    src = Source()
+    src = ConstantSource(1,2,1000)
     caps = [Capacitor(c) for c in cap_values]
     sink = Sink()
     energy_costs = np.array([1.0e-6, 2.0e-6, 1.5e-6, 3.0e-6, 2.5e-6])

@@ -77,7 +77,6 @@ class Capacitor(SwitchedComponent):
 
 class Source(SwitchedComponent, ABC):
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
         self.data = None
         self.load_data()
 
@@ -95,8 +94,7 @@ class Source(SwitchedComponent, ABC):
 
 
 class ConstantSource(Source):
-    def __init__(self, source_amplitude, time, sample_hz, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, source_am, time, sample_hz, **kwargs):
         self.source_am = source_am      # source amplitude in Volts
         self.time = time                # length of the power trace in seconds
         self.sample_hz = sample_hz      # sampling frequency in Hz
@@ -124,7 +122,6 @@ class SineSource(Source):
         sample_hz,
         **kwargs
     ):
-        super().__init__(**kwargs)
         self.source_am = source_am      # source amplitude in Volts
         self.source_os = source_os      # source voltage offset in Volts
         self.source_hz = source_hz      # frequency of the source in Hz
@@ -157,14 +154,36 @@ class SineSource(Source):
 
 
 class Sink(SwitchedComponent):
-    # TODO: subclass with computational state machine (states and costs)
-    # TODO: step through states in callback
     def __init__(self):
         pass
 
 
 class SMSink(Sink):
-    def __init__(self, **kwargs):
+    def __init__(self, sm_states, **kwargs):
+        """
+        sm_states is a dict whose key:value pairs are:
+        key:
+            state
+        value:
+        [
+            cost (float),
+            duration (int?)
+            [           # list of allowed state transitions
+                [       # each item is dst_state key and list of conditions
+                    dst_state_1,
+                    [
+                        condition_1,
+                        ...
+                    ]
+                ]
+            ]
+        ]
+        """
+        self.sm_states = sm_states  # dict of state:[cost, (trans1, conds1), ...] pairs
+        self.state = None           # name of state as a string
+        self.cost = None            # this must be in units of Watts
+
+    def run_sm(self):
         pass
 
 
