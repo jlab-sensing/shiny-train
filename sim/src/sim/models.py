@@ -167,29 +167,40 @@ class SineSource(Source):
         source_os,
         source_hz,
         source_ph,
-        time,
-        sample_hz,
         **kwargs
     ):
-        super().__init__(**kwargs)
-        self.source_am = source_am      # source amplitude in Volts
-        self.source_os = source_os      # source voltage offset in Volts
-        self.source_hz = source_hz      # frequency of the source in Hz
-        self.source_ph = source_ph      # phase offset of the source in radians
-        self.time = time                # length of the power trace in seconds
-        self.sample_hz = sample_hz      # sampling frequency in Hz
+        """Initializes the SineSource
+
+        Args:
+            source_am: source amplitude (V)
+            source_os: source voltage offset (V)
+            source_hz: frequency of the source (Hz)
+            source_ph: phase offset of the source in radians
+        """
+
+        self.source_am = source_am
+        self.source_os = source_os
+        self.source_hz = source_hz
+        self.source_ph = source_ph
+
+        # this init must be after setting variables that are used in load_data.
+        # The Source derived class calls the abstract method load_data so they
+        # have to be set before the super call.
+        Source.__init__(self, **kwargs)
+
 
     def load_data(self):
-        steps = int(self.time * self.sample_hz)
+        sample_hz = 1 / self.dt
+        steps = int(self.duration * sample_hz)
 
         # Elapsed time in seconds, used for generating the waveform
-        ts = np.linspace(0, self.time, steps, endpoint=False)
+        ts = np.linspace(0, self.duration, steps, endpoint=False)
 
         # Datetime timestamps
         timestamps = pd.date_range(
             start=pd.Timestamp.now(),
             periods=steps,
-            freq=pd.Timedelta(seconds=1 / self.sample_hz)
+            freq=pd.Timedelta(seconds=1 / sample_hz)
         )
 
         # Generate voltage
