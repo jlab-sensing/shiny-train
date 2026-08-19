@@ -79,8 +79,7 @@ class Capacitor(SwitchedComponent):
 
 
 class Source(SwitchedComponent, ABC):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self):
         self.data = None
         self.load_data()
 
@@ -98,11 +97,18 @@ class Source(SwitchedComponent, ABC):
 
 
 class ConstantSource(Source):
-    def __init__(self, source_amplitude, time, sample_hz, **kwargs):
-        super().__init__(**kwargs)
-        self.source_am = source_am      # source amplitude in Volts
-        self.time = time                # length of the power trace in seconds
-        self.sample_hz = sample_hz      # sampling frequency in Hz
+    def __init__(self, voltage: float, duration: float, dt: float):
+        """Initial data for a constant voltage source.
+
+        Args:
+            voltage: Voltage in volts
+            duration: Length of power traces in seconds
+            dt: Sampling period
+        """
+
+        self.source_am = voltage
+        self.time = duration
+        self.sample_hz = dt
 
     def load_data(self):
         steps = self.time * self.sample_hz
