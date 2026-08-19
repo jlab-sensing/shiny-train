@@ -74,9 +74,17 @@ class SwitchedComponent:
 
 
 class Capacitor(SwitchedComponent):
-    def __init__(self, farads: float):
+    def __init__(self, farads: float, initial_voltage: float = 0.):
+        """Initializes capacitor element.
+
+        Args:
+            farads: Farads
+            initial_voltage: Forced voltage at start of sim
+        """
+
         self.farads = farads
-        self.voltage = 0
+        self.initial_voltage = initial_voltage
+        self.voltage = 0.
 
 
 class Source(SwitchedComponent, ABC):
@@ -456,9 +464,16 @@ class CapacitorStorageSim:
             ngspice_shared=self.shared,
         )
 
+        # Initial conditions
+        ic_kwargs = {}
+        for idx, cap in enumerate(self.config.caps):
+            ic_kwargs[f"c{idx}_pos"] = cap.initial_voltage
+        simulator.initial_condition(**ic_kwargs)
+
         analysis = simulator.transient(
             step_time=self.config.src.dt @ u_ms,
             end_time=self.config.src.duration @ u_s,
+            use_initial_condition=True,
         )
 
         return analysis
