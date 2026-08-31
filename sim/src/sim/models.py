@@ -20,7 +20,7 @@ from PySpice.Unit import *
 import PySpice
 from cffi import FFI
 
-from sim.sink_sm import SinkSM
+from .state_machines import SinkSM
 
 
 caplib_path = os.path.join(
@@ -87,13 +87,27 @@ class Capacitor(SwitchedComponent):
         farads: float,
         v_min: float = 1.6,
         v_max: float = 3.3,
-        leak_floor: float = 3e-6
+        leak_floor: float = 3e-6,
+        initial_voltage: float = 0.
     ):
+        """Initializes capacitor element.
+
+        Args:
+            farads: Farads
+            v_min: Minimum voltage allowed
+            v_max: Maximum voltage allowed
+            leak_floor: Minimum leakage
+            initial_voltage: Forced voltage at start of sim
+        """
+
         self.farads = farads
-        self.voltage = 0
         self.v_min = v_min
         self.v_max = v_max
         self.leak_floor = leak_floor
+        self.initial_voltage = initial_voltage
+
+        self.voltage = 0
+
 
     @property
     def energy(self) -> float:
@@ -109,19 +123,18 @@ class Capacitor(SwitchedComponent):
 
 
 class Source(SwitchedComponent, ABC):
-    def __init__(self, **kwargs):
-        self.data = None
-        self.load_data()
+    def __init__(self, duration: float, dt: float):
+        """Initialize power source.
 
-    @abstractmethod
-    def load_data(self):
-        """
-        Subclasses must implement load_data, subject to the file types
-        they read from.
+        Args:
+            duration: Length of power traces (s)
+            dt: Sampling period (ms)
 
-        Output is a pandas dataframe with 2 columns: time and power harvested,
-        assigned to self.data
         """
+
+        self.duration = duration
+        self.dt = dt
+
         self.data = None
         self.load_data()
 
@@ -237,14 +250,6 @@ class Sink(SwitchedComponent):
     # TODO: subclass with computational state machine (states and costs)
     # TODO: step through states in callback
     def __init__(self):
-        pass
-
-
-class SMSink(Sink):
-    def __init__(self, **kwargs):
-        pass
-
-
         pass
 
 
