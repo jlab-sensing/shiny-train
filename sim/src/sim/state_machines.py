@@ -6,6 +6,8 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
+import pdb
+
 DC_VOLTS = 3.7
 
 
@@ -40,7 +42,7 @@ class SinkSM(StateChart):
     class task(State.Compound):
         measure = State(
             "measure",
-            initial=True,
+            # initial=True,
             value=Task(
                 cost=-11.68e-3 * DC_VOLTS,
                 duration=0.511)
@@ -59,7 +61,10 @@ class SinkSM(StateChart):
             )
         h = HistoryState(type="deep")
 
-    sleep = State("sleep")
+    sleep = State(
+        "sleep",
+        initial=True
+    )
 
     # Self-transitions while executing, advance when done
     cycle = (
@@ -69,10 +74,12 @@ class SinkSM(StateChart):
         task.tx.to(task.rx) |
         task.rx.to.itself(cond="executing") |
         task.rx.to(task.measure)
+        # sleep.to.itself(cond="recharging") |
+        # sleep.to(task.measure, cond="charged")
     )
 
     pause = task.to(sleep)
-    wake = sleep.to(task.h)
+    wake = sleep.to(task.measure, cond="no_history") | sleep.to(task.h)
 
     def _get_task_state_id(self):
         for state in self.configuration:
@@ -119,17 +126,20 @@ class SinkSM(StateChart):
         self.cap.voltage = min(self.cap.voltage + 0.05, self.cap.v_max)
         return self.cap.voltage < self.cap.v_max
 
+    def no_history(self):
+        return self.history_values == {}
+
     def on_cycle(self, source=None, target=None, **kwargs):
 
         # TEST FIXTURE: universal basic income
-        self.cap.voltage = min(self.cap.voltage + 0.05, self.cap.v_max)
+        # self.cap.voltage = min(self.cap.voltage + 0.05, self.cap.v_max)
 
         if source and hasattr(source, 'value') and isinstance(source.value, Task):
             task = source.value
             energy = self.cap.energy
             min_energy = self.cap.min_energy
             remaining_time = task.duration - self.time + self.task_start
-            projected_energy = energy + task.cost * remaining_time
+            projected_energy = energy + task.cost * 0.05
             # print(energy, projected_energy, min_energy)
 
             if projected_energy <= min_energy:
@@ -159,11 +169,11 @@ def init_SinkSM(cap):
 
 
 if __name__ == "__main__":
-    cap = Capacitor(20e-3)
+    cap = Capacitor(30e-3)
     cap.voltage = 3.
 
     sm = init_SinkSM(cap)
-    print(sm.cap.voltage, sm.cap.farads, sm.time, sm.task_start, sm.load_value)
+    # print(sm.cap.voltage, sm.cap.farads, sm.time, sm.task_start, sm.load_value)
 
     print(f"{'Step':>7} | {'State':>8} | {'Load(mW)':>8} | {'TaskTime(s)':>10} | {'CapVolt':>8} | {'Energy(uJ)':>10} | {'Action'}")
     print("-" * 75)
@@ -171,7 +181,15 @@ if __name__ == "__main__":
     load_mW = sm.load_value * 1e3
     state_id = sm._get_task_state_id() or sm._get_current_state_id()
     action = "cycle"
-    print(f"{0:>8}| {state_id:>8} | {load_mW:8.3f} | {sm.time - sm.task_start:11.3f} | {cap.voltage:7.3f}  | {energy_uJ:10.2f} | {action}")
+    print(
+        f"{0:>8} | "
+        f"{state_id:>8} | "
+        f"{load_mW:8.3f} | "
+        f"{sm.time - sm.task_start:11.3f} | "
+        f"{cap.voltage:7.3f} | "
+        f"{energy_uJ:10.2f} | "
+        f"{action}"
+    )
 
     for i in range(500):
         sm.time += 0.05
@@ -188,7 +206,18 @@ if __name__ == "__main__":
             action = "cycle"
             if state_id == "sleep":
                 action = "recharge" if sm.recharging() else "wake"
-            print(f"{(i+1)*0.05:8.2f}| {state_id:>8} | {load_mW:8.3f} | {sm.time - sm.task_start:11.3f} | {cap.voltage:7.3f}  | {energy_uJ:10.2f} | {action}")
+            # tmp = pdb.set_trace()
+            # print(i, state_id, load_mW, cap.voltage,energy_uJ, action)
+            # print(sm._get_task_state_id())
+            print(
+                f"{(i+1)*0.05:8.2f} | "
+                f"{state_id:>8} | "
+                f"{load_mW:8.3f} | "
+                f"{sm.time - sm.task_start:11.2f} | "
+                f"{cap.voltage:7.3f} | "
+                f"{energy_uJ:10.2f} | "
+                f"{action}"
+            )
 
     print("-" * 75)
     print(f"Final: voltage={cap.voltage:.3f}V, state={sm._get_task_state_id() or sm._get_current_state_id()}")
