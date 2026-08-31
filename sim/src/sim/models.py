@@ -16,6 +16,8 @@ from PySpice.Spice.Netlist import Circuit
 from PySpice.Spice.NgSpice.Shared import NgSpiceShared
 from PySpice.Unit import *
 
+from sim.sink_sm import SinkSM
+
 
 caplib_path = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -70,9 +72,30 @@ class SwitchedComponent:
 
 
 class Capacitor(SwitchedComponent):
-    def __init__(self, farads: float):
+    def __init__(
+        self,
+        farads: float,
+        v_min: float = 1.6,
+        v_max: float = 3.3,
+        leak_floor: float = 3e-6
+    ):
         self.farads = farads
         self.voltage = 0
+        self.v_min = v_min
+        self.v_max = v_max
+        self.leak_floor = leak_floor
+
+    @property
+    def energy(self) -> float:
+        return self.voltage ** 2 * self.farads / 2
+
+    @property
+    def min_energy(self) -> float:
+        return self.v_min ** 2 * self.farads / 2
+
+    @property
+    def leakage(self):
+        return max(0.01*self.farads*self.voltage, self.leak_floor)
 
 
 class Source(SwitchedComponent, ABC):
@@ -100,13 +123,13 @@ class ConstantSource(Source):
         self.sample_hz = sample_hz      # sampling frequency in Hz
 
     def load_data(self):
-        steps = self.time * self.sample_hz
+        steps = int(self.time * self.sample_hz)
         ts = np.linspace(0, self.time, steps)
         vs = np.ones_like(ts)
-        vs *= self.source_amplitude
+        vs *= self.source_am
         data = np.vstack((ts, vs)).T
         self.data = pd.DataFrame(
-            array,
+            data,
             columns=['Time(s)', 'Potential(V)']
         )
 
@@ -159,32 +182,26 @@ class Sink(SwitchedComponent):
 
 
 class SMSink(Sink):
-    def __init__(self, sm_states, **kwargs):
+    def __init__(self, **kwargs):
         """
-        sm_states is a dict whose key:value pairs are:
-        key:
-            state
-        value:
-        [
-            cost (float),
-            duration (int?)
-            [           # list of allowed state transitions
-                [       # each item is dst_state key and list of conditions
-                    dst_state_1,
-                    [
-                        condition_1,
-                        ...
-                    ]
-                ]
-            ]
-        ]
+        sm_states is a state machine instance representing an intermittent
+        computing platform with active and passive states
+
+        the active state cycles through the substates measure, analyze, and
+        save, each with a cost to execute, if power allows, else it sleeps
+
+        the passive state recharges until the wake threshold is reached,
+        then wakes
         """
-        self.sm_states = sm_states  # dict of state:[cost, (trans1, conds1), ...] pairs
-        self.state = None           # name of state as a string
+        self.sm = SinkSM()
         self.cost = None            # this must be in units of Watts
 
     def run_sm(self):
-        pass
+        self.sm.send("cycle")
+
+        current_id = self.sm._get_current_state_id()
+        if current_id == "sleep" and self.sm.charged():
+            self.sm.send("wake")
 
 
 class CapacitorStorageSimConfig:
@@ -259,13 +276,9 @@ class CapacitorStorageSim:
                 f"ngspice_id-{ngspice_id} get_vsrc_data @{time} node {node}"
             )
 
-            # TODO Update to configured power source
-            if node == "v_src":
-                voltage[0] = 1
-
-            # TODO Update for constant sink power
-            if node == "sink":
-                pass
+            # Source voltage
+            if node in ("v_src", "v_src_pos"):
+                voltage[0] = self.config.src.source_am
 
             # configure switches
             for n in range(self.config.p_lines):
@@ -426,8 +439,7 @@ class CapacitorStorageSim:
 
         return circuit
 
-    def _simulate(self, circuit: Circuit):
-
+    def _simulate(self, circuit: Circuit, end_time: float = 2.0):
         simulator = circuit.simulator(
             temperature=25,
             nominal_temperature=25,
@@ -437,21 +449,22 @@ class CapacitorStorageSim:
 
         analysis = simulator.transient(
             step_time=1 @ u_ms,
-            end_time=2 @ u_s,
+            end_time=end_time @ u_s,
         )
 
         return analysis
 
-    def run(self):
+    def run(self, end_time: float = 2.0):
         """Run the simulation on a set of capacitor values.
 
         Args:
             caps: Capacitor array values
+            end_time: Simulation end time in seconds
         """
 
         circuit = self._create_circuit()
         print(circuit)
-        self.analysis = self._simulate(circuit)
+        self.analysis = self._simulate(circuit, end_time=end_time)
 
     def _plot_capacitors(self):
         _, axs = plt.subplots(len(self.config.caps), 1, sharex=True)
@@ -469,7 +482,6 @@ class CapacitorStorageSim:
         for ax in axs:
             ax.grid()
             ax.legend()
-
     def _plot_cap_switches(self):
         num_switches = self.config.p_lines * len(self.config.caps)
         _, axs = plt.subplots(num_switches, sharex=True)
