@@ -26,7 +26,7 @@ from ortools.linear_solver import pywraplp
 import numpy as np
 import scipy.sparse as sp
 
-from sim.models import (
+from .models import (
     Capacitor,
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
