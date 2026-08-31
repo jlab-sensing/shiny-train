@@ -12,10 +12,18 @@ requires-python = ">=3.10"
 dependencies = [
     "spicelib",
     "PySpice",
-    "pandas"
+    "pandas",
+    "python-statemachine",
+    "pandas",
+    "matplotlib",
+    "ortools",
+    "scipy",
 ]
 
 [project.optional-dependencies]
 dev = [
     "ruff",
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sim"]

@@ -20,8 +20,13 @@ from PySpice.Unit import *
 import PySpice
 from cffi import FFI
 
+from sim.sink_sm import SinkSM
 
-caplib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cap.lib")
+
+caplib_path = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "cap.lib"
+)
 
 
 class SwitchedComponent:
@@ -77,32 +82,46 @@ class SwitchedComponent:
 
 
 class Capacitor(SwitchedComponent):
-    def __init__(self, farads: float, initial_voltage: float = 0.):
-        """Initializes capacitor element.
-
-        Args:
-            farads: Farads
-            initial_voltage: Forced voltage at start of sim
-        """
-
+    def __init__(
+        self,
+        farads: float,
+        v_min: float = 1.6,
+        v_max: float = 3.3,
+        leak_floor: float = 3e-6
+    ):
         self.farads = farads
-        self.initial_voltage = initial_voltage
-        self.voltage = 0.
+        self.voltage = 0
+        self.v_min = v_min
+        self.v_max = v_max
+        self.leak_floor = leak_floor
+
+    @property
+    def energy(self) -> float:
+        return self.voltage ** 2 * self.farads / 2
+
+    @property
+    def min_energy(self) -> float:
+        return self.v_min ** 2 * self.farads / 2
+
+    @property
+    def leakage(self):
+        return max(0.01*self.farads*self.voltage, self.leak_floor)
 
 
 class Source(SwitchedComponent, ABC):
-    def __init__(self, duration: float, dt: float):
-        """Initialize power source.
+    def __init__(self, **kwargs):
+        self.data = None
+        self.load_data()
 
-        Args:
-            duration: Length of power traces (s)
-            dt: Sampling period (ms)
-
+    @abstractmethod
+    def load_data(self):
         """
+        Subclasses must implement load_data, subject to the file types
+        they read from.
 
-        self.duration = duration
-        self.dt = dt
-
+        Output is a pandas dataframe with 2 columns: time and power harvested,
+        assigned to self.data
+        """
         self.data = None
         self.load_data()
 
@@ -226,6 +245,32 @@ class SMSink(Sink):
         pass
 
 
+        pass
+
+
+class SMSink(Sink):
+    def __init__(self, **kwargs):
+        """
+        sm_states is a state machine instance representing an intermittent
+        computing platform with active and passive states
+
+        the active state cycles through the substates measure, analyze, and
+        save, each with a cost to execute, if power allows, else it sleeps
+
+        the passive state recharges until the wake threshold is reached,
+        then wakes
+        """
+        self.sm = SinkSM()
+        self.cost = None            # this must be in units of Watts
+
+    def run_sm(self):
+        self.sm.send("cycle")
+
+        current_id = self.sm._get_current_state_id()
+        if current_id == "sleep" and self.sm.charged():
+            self.sm.send("wake")
+
+
 class CapacitorStorageSimConfig:
     def __init__(
         self,
@@ -289,7 +334,8 @@ class CapacitorStorageSim:
         The simulation starts at time zero.
 
         The callback function has parameters time and voltages of each
-        capacitor. It returns a tuple for the load switch and switch state list
+        capacitor.
+        It returns a tuple for the load switch and switch state list
         that includes all capacitors.
         """
 
@@ -359,9 +405,10 @@ class CapacitorStorageSim:
             Actual data example
                 data =
                 {'vinput#branch': 0j, 'v0#branch': 0j, 'v1#branch': 0j,
-                'l.x0.l1#branch': 0j, 'l.x1.l1#branch': 0j, 'x1.3': 0j, 'x1.2': 0j,
-                'c1+': 0j, 'vsw1+': 0j, 'x0.3': 0j, 'x0.2': 0j, 'c0+': 0j, 'vsw0+':
-                0j, 'output': 0j, 'input': 0j, 'time': (2e-05+0j)}
+                'l.x0.l1#branch': 0j, 'l.x1.l1#branch': 0j, 'x1.3': 0j,
+                'x1.2': 0j, 'c1+': 0j, 'vsw1+': 0j, 'x0.3': 0j, 'x0.2': 0j,
+                'c0+': 0j, 'vsw0+': 0j, 'output': 0j, 'input': 0j,
+                'time': (2e-05+0j)}
             """
 
             for idx, cap in enumerate(self.config.caps):
@@ -395,8 +442,9 @@ class CapacitorStorageSim:
     def _create_circuit(self, model: str = "C_real") -> Circuit:
         """Creates the circuit model.
 
-        Available fields for model is "C_real" and "C_ideal". At time of writing
-        the capacitor model incorperates "Resr", "Rleak", "Cval", "fo".
+        Available fields for model is "C_real" and "C_ideal".
+        At time of writing the capacitor model incorperates:
+            "Resr", "Rleak", "Cval", "fo".
 
         Args:
             model: Capacitor model
@@ -495,8 +543,7 @@ class CapacitorStorageSim:
 
         return circuit
 
-    def _simulate(self, circuit: Circuit):
-
+    def _simulate(self, circuit: Circuit, end_time: float = 2.0):
         simulator = circuit.simulator(
             temperature=25,
             nominal_temperature=25,
@@ -518,11 +565,12 @@ class CapacitorStorageSim:
 
         return analysis
 
-    def run(self):
+    def run(self, end_time: float = 2.0):
         """Run the simulation on a set of capacitor values.
 
         Args:
             caps: Capacitor array values
+            end_time: Simulation end time in seconds
         """
 
         self.circuit = self._create_circuit()
@@ -544,7 +592,6 @@ class CapacitorStorageSim:
         for ax in axs:
             ax.grid()
             ax.legend()
-
     def _plot_cap_switches(self):
         num_switches = self.config.p_lines * len(self.config.caps)
         _, axs = plt.subplots(num_switches, sharex=True)
@@ -596,13 +643,15 @@ class CapacitorStorageSim:
 
         for n in range(self.config.p_lines):
             axs[ax_idx].plot(
-                self.analysis[f"ctrl_src_pwr{n}_pos"], label=f"source, line {n}"
+                self.analysis[f"ctrl_src_pwr{n}_pos"],
+                label=f"source, line {n}"
             )
             ax_idx += 1
 
         for n in range(self.config.p_lines):
             axs[ax_idx].plot(
-                self.analysis[f"ctrl_pwr{n}_sink_pos"], label=f"sink, line {n}"
+                self.analysis[f"ctrl_pwr{n}_sink_pos"],
+                label=f"sink, line {n}"
             )
             ax_idx += 1
 
@@ -664,12 +713,16 @@ class SineShared(NgSpiceShared):
         self._pulsation = float(frequency.pulsation)
 
     def get_vsrc_data(self, voltage, time, node, ngspice_id):
-        self._logger.debug(f"ngspice_id-{ngspice_id} get_vsrc_data @{time} node {node}")
+        self._logger.debug(
+            f"ngspice_id-{ngspice_id} get_vsrc_data @{time} node {node}"
+        )
         voltage[0] = self._amplitude * math.sin(self._pulsation * time)
         return 0
 
     def get_isrc_data(self, current, time, node, ngspice_id):
-        self._logger.debug(f"ngspice_id-{ngspice_id} get_isrc_data @{time} node {node}")
+        self._logger.debug(
+            f"ngspice_id-{ngspice_id} get_isrc_data @{time} node {node}"
+        )
         current[0] = 1.0
         return 0
 
