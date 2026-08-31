@@ -150,16 +150,39 @@ class Source(SwitchedComponent, ABC):
 
         pass
 
+    def get_power(self, time: float) -> float:
+        """Gets the power consumption at a given timestep.
+
+        Args:
+            time: Number of seconds since the start of the sim.
+
+        Returns:
+            Power in watts.
+        """
+
+        return 0.1
+
+    def get_voltage(self) -> float:
+        """Gets the constant voltage level of the source
+
+        Returns:
+            Voltage in volts.
+        """
+
+        return 0.1;
+
 
 class ConstantSource(Source):
-    def __init__(self, voltage: float, **kwargs):
+    def __init__(self, voltage: float, power: float, **kwargs):
         """Initial data for a constant voltage source.
 
         Args:
-            voltage: Voltage in volts
+            voltage: Voltage in volts.
+            power: Power supplied in watts.
         """
 
         self.voltage = voltage
+        self.power = power
 
         # this init must be after setting variables that are used in load_data.
         # The Source derived class calls the abstract method load_data so they
@@ -190,6 +213,12 @@ class ConstantSource(Source):
             'Timestamp': timestamps,
             'Potential(V)': vs
         })
+
+    def get_voltage(self):
+        return self.voltage
+
+    def get_power(self):
+        return self.power
 
 
 class SineSource(Source):
@@ -252,6 +281,15 @@ class Sink(SwitchedComponent):
     def __init__(self):
         pass
 
+    def get_power(self) -> float:
+        """Gets the current power draw of the sink.
+
+        Returns:
+            Power in W. Negative.
+        """
+
+        return 0.
+
 
 class SMSink(Sink):
     def __init__(self, **kwargs):
@@ -266,7 +304,6 @@ class SMSink(Sink):
         then wakes
         """
         self.sm = SinkSM()
-        self.cost = None            # this must be in units of Watts
 
     def run_sm(self):
         self.sm.send("cycle")
@@ -274,6 +311,15 @@ class SMSink(Sink):
         current_id = self.sm._get_current_state_id()
         if current_id == "sleep" and self.sm.charged():
             self.sm.send("wake")
+
+    def get_power(self) -> float:
+        """Gets power consumption of current state.
+
+        Returns:
+            Power in W. Negative
+        """
+
+        return self.sm.load_value
 
 
 class CapacitorStorageSimConfig:
@@ -363,16 +409,15 @@ class CapacitorStorageSim:
             # TODO Update to configured power source
             # this is constant
             if node == "v_src":
-                voltage[0] = self.config.source.get_voltage()
+                voltage[0] = self.config.src.get_voltage()
 
             # TODO update power source. Voltage equals power.
             if node == "v_pwr_src":
-                voltage[0] = self.config.source.get_power(time)
+                voltage[0] = self.config.src.get_power(time)
 
             # TODO Update for constant sink power. Voltage equals power.
             if node == "v_pwr_sink":
-                # TODO check sink power state and set deep sleep
-                voltage[0] = self.config.sink.get_power(time)
+                voltage[0] = self.config.sink.get_power()
 
             # configure switches
             for n in range(self.config.p_lines):
@@ -478,7 +523,7 @@ class CapacitorStorageSim:
         circuit.V("_src", "v_src_pos", circuit.gnd, "dc 0 external")
 
         circuit.V("_pwr_source", "v_pwr_source", circuit.gnd, "dc 0 external")
-        circuit.raw_spice += "R1 v_src_pos src {V(output)**2/v_pwr_source}\n"
+        circuit.raw_spice += "R1 v_src_pos src {V(v_src_pos)**2/V(v_pwr_source)}\n"
 
 
         # input power switches
@@ -544,7 +589,7 @@ class CapacitorStorageSim:
 
         # new voltage controlled resistive load
         circuit.V("_pwr_sink", "v_pwr_sink", circuit.gnd, "dc 0 external")
-        circuit.raw_spice += f"R1 sink gnd {{limit({self.load_min_r},V(v_pwr_sink)**2/0.01,{self.load_max_r})}}\n"
+        circuit.raw_spice += f"R2 sink gnd {{limit({self.load_min_r},V(v_pwr_sink)**2/0.01,{self.load_max_r})}}\n"
 
         return circuit
 

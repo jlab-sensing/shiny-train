@@ -33,7 +33,7 @@ from sim.models import (
     SMSink,
     ConstantSource,
 )
-from sim.sink_sm import Task
+from .state_machines import Task
 
 
 START = 0
@@ -493,6 +493,7 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         self._apply_assignment(self.assignment)
         self._update_sink()
 
+
     def _decode_assignment_result(self, assignment):
         """
         Decode the solver decision vector into capacitor/task assignments.
@@ -569,7 +570,6 @@ class LeacSimConfig(CapacitorStorageSimConfig):
     def _update_sink(self):
         self.sink.run_sm()
 
-
 if __name__ == "__main__":
     # Small example.
     M = 2
@@ -577,8 +577,8 @@ if __name__ == "__main__":
 
     cap_values = [100e-6, 470e-6, 1e-3]  # Larger capacitors
 
-    # src = Source()
-    src = ConstantSource(0.5, 2, 100)
+    # 100 mW @ 3.3 V
+    src = ConstantSource(3.3, 0.1, duration=2, dt=1)
     caps = [Capacitor(c, v_min=0.5, v_max=4.5) for c in cap_values]
     tasks = [
         Task(  # measure
@@ -608,5 +608,5 @@ if __name__ == "__main__":
     )
 
     sim = CapacitorStorageSim(config)
-    sim.run(end_time=2.0)
+    sim.run()
     sim.plot()
