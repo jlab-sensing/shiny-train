@@ -33,10 +33,10 @@ from .models import (
     SMSink,
     ConstantSource,
 )
-from .state_machines import Task
+from .state_machines import Task, init_SinkSM
 
 
-START = 0
+_TASK_IDX = {"measure": 0, "tx": 1, "rx": 2}
 
 
 @dataclass
@@ -95,7 +95,29 @@ def build_operators(N: int, K: int):
         format="csr",
     )
 
-    return M1, M2, M3, M4
+    # P maps z -> tasks-per-capacitor.
+    #
+    # z = [x_0,...,x_{K-1}, y_00,...,y_0,K-1, y_10,...]
+    #
+    # P z = [
+    #     sum_i y_i0,
+    #     sum_i y_i1,
+    #     ...
+    #     sum_i y_i,K-1
+    # ]
+    P = sp.hstack(
+        [
+            sp.csr_matrix((K, K)),
+            sp.kron(
+                np.ones((1, N)),
+                sp.eye(K, format="csr"),
+                format="csr",
+            ),
+        ],
+        format="csr",
+    )
+
+    return M1, M2, M3, M4, P
 
 
 def build_model(
@@ -164,7 +186,7 @@ def build_model(
     if rewards.shape != (N,):
         raise ValueError("rewards must have shape (N,)")
 
-    M1, M2, M3, M4 = build_operators(N, K)
+    M1, M2, M3, M4, P = build_operators(N, K)
 
     # z = [x; y]
     # c = [0_K; E_1 1_K; ...; E_N 1_K]
@@ -379,18 +401,18 @@ class TaskAssigner:
             "PDLP",
         ]:
             result = solve_with_ortools(model, solver_name)
-            print(
-                f"Wake @ time: {time:.06f}:",
-                "\n     status =", result["status"],
-                "\n     objective =", result["objective"],
-                "\n     solution =", result["solution"],
-                "\n     time_ms =", result["wall_time_ms"],
-                "\n     iterations =", result["iterations"],
-            )
-            if solver_name == "CBC_MIXED_INTEGER_PROGRAMMING":
-                print(
-                    "     nodes =", result["nodes"]
-                )
+            # print(
+            #     f"Solving @ time: {time:.06f}:",
+            #     "\n     status =", result["status"],
+            #     "\n     objective =", result["objective"],
+            #     "\n     solution =", result["solution"],
+            #     "\n     time_ms =", result["wall_time_ms"],
+            #     "\n     iterations =", result["iterations"],
+            # )
+            # if solver_name == "CBC_MIXED_INTEGER_PROGRAMMING":
+            #     print(
+            #         "     nodes =", result["nodes"]
+            #     )
             return result
 
     def should_schedule(self, config=None):
@@ -429,52 +451,29 @@ class LeacSimConfig(CapacitorStorageSimConfig):
             cap_limit,
         )
 
-    _TASK_IDX = {"measure": 0, "tx": 1, "rx": 2}
-
-    def _active_task_idx(self):
-        """Return the index of the SM's active task substate, or None in sleep.
-
-        The substates are the instance-bound states in ``self.sm.configuration``.
-        Accessing ``self.sm.task.measure.is_active`` does NOT work: that path
-        resolves to the class-template state, whose ``is_active`` is always
-        False. ``_get_task_state_id`` already iterates the live configuration.
-        """
-        state_id = self.sm._get_task_state_id()
-        return None if state_id is None else self._TASK_IDX[state_id]
-
     def callback(self, time: float):
+        # if self.sm._get_task_state_id() is not None:
+            # print(f'{time:.6f}: {self.sm._get_task_state_id()}, {self.sm._get_current_state_id()}')
 
-        self.sm.time = time
-
-        if time == START:
-            result = self.assigner.assign(time, solver_name=self.solver_name)
-            self.assignment = result["solution"]
-            # Initial: all caps charging from source on line 0
+        if self.sm.time == 0.0:
             for cap in self.caps:
                 cap.connect(0)
             self.src.connect(0)
             self.sink.connect(1)
 
+        self.sm.time = time
 
         # Use assignment to switch capacitors between charge (line 0) and discharge (line 1)
         if self.assignment is not None:
-            pairs = self._decode_assignment_result(self.assignment)
+            pairs = self._apply_assignment_to_SM(self.assignment)
             # Find which capacitor is assigned to the active task
             assigned_cap_idx = None
-            task_substates = [
-                self.sm.task.measure,
-                self.sm.task.tx,
-                self.sm.task.rx,
-            ]
-            active_substate_idx = None
-            for idx, substate in enumerate(task_substates):
-                if substate.is_active:
-                    active_substate_idx = idx
-                    break
 
-            if active_substate_idx is not None:
+            active_substate = self.sm._get_task_state_id()
+            if active_substate is not None:
                 for cap_idx, task_idx in pairs:
-                    if task_idx == active_substate_idx:
+                    if task_idx == _TASK_IDX[active_substate]:
+                        # print(f'{self.sm.time:.6f}: {cap_idx}, {task_idx}')
                         assigned_cap_idx = cap_idx
                         break
 
@@ -490,9 +489,7 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         if self.assigner.should_schedule(self):
             result = self.assigner.assign(time, solver_name=self.solver_name)
             self.assignment = result["solution"]
-        self._apply_assignment(self.assignment)
         self._update_sink()
-
 
     def _decode_assignment_result(self, assignment):
         """
@@ -542,7 +539,7 @@ class LeacSimConfig(CapacitorStorageSimConfig):
 
         return pairs
 
-    def _apply_assignment(self, assignment):
+    def _apply_assignment_to_SM(self, assignment):
         pairs = self._decode_assignment_result(assignment)
         # Map task_idx to SM substate: 0=measure, 1=tx, 2=rx
         task_substates = [
@@ -551,35 +548,36 @@ class LeacSimConfig(CapacitorStorageSimConfig):
             self.sm.task.rx,
         ]
         # Find which substate is currently active
-        active_substate_idx = None
-        for idx, substate in enumerate(task_substates):
-            if substate.is_active:
-                active_substate_idx = idx
-                break
-
-        if active_substate_idx is not None:
+        active_substate = self.sm._get_task_state_id()
+        if active_substate is not None:
             # Find capacitor assigned to this task
             for cap_idx, task_idx in pairs:
-                if task_idx == active_substate_idx:
-                    self.sm.cap = self.caps[cap_idx]
+                if task_idx == _TASK_IDX[active_substate]:
+                    if self.caps[cap_idx].voltage > self.caps[cap_idx].v_min:
+                        self.sm.cap = self.caps[cap_idx]
+                        print(f'{self.sm.time:.6f}: {active_substate}, Cap{cap_idx} Volts:{self.sm.cap.voltage:.6f}')
                     break
         elif self.sm.sleep.is_active:
             # In sleep, no capacitor assigned to task; cap recharges via source
             pass
+        else:
+            # print('bonk')
+            pass
+        return pairs
 
     def _update_sink(self):
         self.sink.run_sm()
 
 if __name__ == "__main__":
     # Small example.
-    M = 2
-    CONST_VOLTAGE = 3.7
+    M = 3
+    CONST_VOLTAGE = 3.3
 
-    cap_values = [100e-6, 470e-6, 1e-3]  # Larger capacitors
+    cap_values = [20e-3, 20e-3, 20e-3]  # Larger capacitors
 
     # 100 mW @ 3.3 V
-    src = ConstantSource(3.3, 0.1, duration=2, dt=1)
-    caps = [Capacitor(c, v_min=0.5, v_max=4.5) for c in cap_values]
+    src = ConstantSource(3.7, 0.1, duration=10, dt=1)
+    caps = [Capacitor(c, v_min=0.5, v_max=3.3) for c in cap_values]
     tasks = [
         Task(  # measure
             cost=-11.68e-3 * CONST_VOLTAGE,
@@ -594,7 +592,8 @@ if __name__ == "__main__":
             duration=0.937
         )
     ]
-    sink = SMSink()
+
+    sink = SMSink(init_SinkSM(caps[0]))
     solver_name = "CBC_MIXED_INTEGER_PROGRAMMING"
 
     config = LeacSimConfig(

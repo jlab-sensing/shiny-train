@@ -292,7 +292,7 @@ class Sink(SwitchedComponent):
 
 
 class SMSink(Sink):
-    def __init__(self, **kwargs):
+    def __init__(self, sink, **kwargs):
         """
         sm_states is a state machine instance representing an intermittent
         computing platform with active and passive states
@@ -303,13 +303,18 @@ class SMSink(Sink):
         the passive state recharges until the wake threshold is reached,
         then wakes
         """
-        self.sm = SinkSM()
+        self.sm = sink
 
     def run_sm(self):
         self.sm.send("cycle")
 
         current_id = self.sm._get_current_state_id()
         if current_id == "sleep" and self.sm.charged():
+            # energy = self.sm.cap.energy
+            # min_energy = self.sm.cap.min_energy
+            # projected_energy = energy + self.sm.load_value * self.sm.remaining_time
+            #
+            # print(f'{self.sm.time:.6f}: waking ({energy}, {projected_energy}, {min_energy})')
             self.sm.send("wake")
 
     def get_power(self) -> float:
