@@ -80,6 +80,15 @@ class SwitchedComponent:
 
         return self._sw_arr[idx]
 
+    def connected(self) -> bool:
+        """Checks if any swithes are connected
+
+        Returns:
+            bool
+        """
+
+        return any(self._sw_arr)
+
 
 class Capacitor(SwitchedComponent):
     def __init__(
@@ -290,6 +299,25 @@ class Sink(SwitchedComponent):
 
         return 0.
 
+class ConstantSink(Sink):
+    def __init__(self, power: float):
+        """Sets constant power draw on sink
+
+        Args:
+            power: Power in watts
+        """
+
+        self.power = power
+
+    def get_power(self) -> float:
+        """Gets power drain
+
+        Returns:
+            Power in watts.
+        """
+
+        return self.power
+
 
 class SMSink(Sink):
     def __init__(self, sink, **kwargs):
@@ -416,13 +444,20 @@ class CapacitorStorageSim:
             if node == "v_src":
                 voltage[0] = self.config.src.get_voltage()
 
-            # TODO update power source. Voltage equals power.
             if node == "v_pwr_src":
-                voltage[0] = self.config.src.get_power(time)
+                if self.config.src.connected():
+                    voltage[0] = self.config.src.get_power(time)
+                else:
+                    voltage[0] = 1e-9
 
-            # TODO Update for constant sink power. Voltage equals power.
             if node == "v_pwr_sink":
-                voltage[0] = self.config.sink.get_power()
+                # TODO (jtmadden): Update to actual voltage
+                voltage[0] = (3.3**2) / self.config.sink.get_power()
+
+                #if self.config.sink.connected():
+                #    voltage[0] = self.config.sink.get_power()
+                #else:
+                #    voltage[0] = 1e-9
 
             # configure switches
             for n in range(self.config.p_lines):
@@ -518,7 +553,6 @@ class CapacitorStorageSim:
         # on resistance = 1 Ohm
         circuit.model("S", "SW", vt=1, ron=1)
 
-
         # old input model
         #circuit.V("_src", "v_src_pos", circuit.gnd, "dc 0 external")
         #circuit.R(1, "v_src_pos", "src", 2.2 @ u_kOhm)
@@ -592,9 +626,9 @@ class CapacitorStorageSim:
         # old resistive load
         #circuit.R(2, "sink", circuit.gnd, 200 @ u_Ohm)
 
-        # new voltage controlled resistive load
+        # new voltage controlled resistive load (R = V^2 / P)
         circuit.V("_pwr_sink", "v_pwr_sink", circuit.gnd, "dc 0 external")
-        circuit.raw_spice += f"R2 sink gnd {{limit({self.load_min_r},V(v_pwr_sink)**2/0.01,{self.load_max_r})}}\n"
+        circuit.raw_spice += "R2 sink gnd {v(v_pwr_sink)}\n"
 
         return circuit
 
@@ -647,6 +681,7 @@ class CapacitorStorageSim:
         for ax in axs:
             ax.grid()
             ax.legend()
+
     def _plot_cap_switches(self):
         num_switches = self.config.p_lines * len(self.config.caps)
         _, axs = plt.subplots(num_switches, sharex=True)
@@ -668,6 +703,7 @@ class CapacitorStorageSim:
         for ax in axs:
             ax.grid()
             ax.legend()
+            ax.set_ylim(-0.1, 1.1)
 
     def _plot_input_output(self):
         _, axs = plt.subplots(2, 1, sharex=True)
@@ -714,6 +750,7 @@ class CapacitorStorageSim:
             ax.set_ylabel("State")
             ax.grid()
             ax.legend()
+            ax.set_ylim(-0.1, 1.1)
 
     def _plot_power_lines(self):
         _, axs = plt.subplots(self.config.p_lines, sharex=True)
@@ -733,11 +770,43 @@ class CapacitorStorageSim:
 
         axs[0].set_title("Source/Sink Power")
 
-        axs[0].plot(self.analysis["v_pwr_src"], label="src")
+        axs[0].plot(self.analysis["v_pwr_source"], label="src")
         axs[1].plot(self.analysis["v_pwr_sink"], label="sink")
 
         for ax in axs:
             ax.set_ylabel("Power (W)")
+
+        axs[1].set_xlabel("Time (ms)")
+
+        for ax in axs:
+            ax.grid()
+            ax.legend()
+
+    def _plot_src_sink_r(self):
+        _, axs = plt.subplots(2, 1, sharex=True)
+
+        axs[0].set_title("Source/Sink Resistance")
+
+        v_src_pos = self.analysis['v_src_pos']
+        v_pwr_source = self.analysis['v_pwr_source']
+
+        R_src = v_src_pos**2 / v_pwr_source
+
+        v_pwr_sink = self.analysis["v_pwr_sink"]
+
+        v_sink = self.analysis["sink"]
+
+        R_sink = v_pwr_sink ** 2 / v_sink
+
+        axs[0].plot(R_src, label="R_src")
+        axs[0].plot(v_src_pos, label="Source voltage")
+        axs[0].plot(v_pwr_source, label="Control voltage (W)")
+        axs[1].plot(R_sink, label="R_sink")
+        axs[1].plot(v_sink, label="Sink Voltage")
+        axs[1].plot(v_pwr_sink, label="Control voltage (W)")
+
+        for ax in axs:
+            ax.set_ylabel("Resistance (R)")
 
         axs[1].set_xlabel("Time (ms)")
 
@@ -751,6 +820,8 @@ class CapacitorStorageSim:
         self._plot_input_output()
         self._plot_io_switches()
         self._plot_power_lines()
+        self._plot_src_sink_power()
+        self._plot_src_sink_r()
 
         plt.show(block=False)
         input("Press enter to close figures...")

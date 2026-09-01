@@ -40,7 +40,7 @@ class MyConfig(CapacitorStorageSimConfig):
 
 cap_values = [10e-6, 100e-6]
 
-src = ConstantSource(1, duration=2, dt=1)
+src = ConstantSource(1, 0.1, duration=2, dt=1)
 caps = [Capacitor(c) for c in cap_values]
 sink = Sink()
 
