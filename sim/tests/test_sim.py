@@ -6,10 +6,11 @@ from sim.models import (
     Capacitor,
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
-    Sink,
+    ConstantSink,
     ConstantSource,
     SineSource,
 )
+
 
 class MyConfig(CapacitorStorageSimConfig):
     def callback(self, time: float):
@@ -29,9 +30,9 @@ class TestSim(unittest.TestCase):
     def test_constant_source(self):
         cap_values = [10e-6, 100e-6]
 
-        src = ConstantSource(1, duration=2, dt=1)
+        src = ConstantSource(1, 0.1, duration=2, dt=1)
         caps = [Capacitor(c) for c in cap_values]
-        sink = Sink()
+        sink = ConstantSink(0.1)
 
         config = MyConfig(src, caps, sink, len(caps))
 
@@ -45,7 +46,7 @@ class TestSim(unittest.TestCase):
 
         src = SineSource(1, 0.5, 10, 0, duration=2, dt=1)
         caps = [Capacitor(c) for c in cap_values]
-        sink = Sink()
+        sink = ConstantSink(0.1)
 
         config = MyConfig(src, caps, sink, len(caps))
 
@@ -58,9 +59,9 @@ class TestSim(unittest.TestCase):
         # Initially tried with 100 but took 60s to complete
         cap_values = [100e-6 for _ in range(10)]
 
-        src = ConstantSource(1, duration=2, dt=1)
+        src = ConstantSource(1, 0.1, duration=2, dt=1)
         caps = [Capacitor(c) for c in cap_values]
-        sink = Sink()
+        sink = ConstantSink(0.1)
 
         config = MyConfig(src, caps, sink, 2)
 
@@ -72,9 +73,9 @@ class TestSim(unittest.TestCase):
     def test_many_lines(self):
         cap_values = [10e-6, 100e-6]
 
-        src = ConstantSource(1, duration=2, dt=1)
+        src = ConstantSource(1, 0.1, duration=2, dt=1)
         caps = [Capacitor(c) for c in cap_values]
-        sink = Sink()
+        sink = ConstantSink(0.1)
 
         config = MyConfig(src, caps, sink, 10)
 
@@ -82,6 +83,58 @@ class TestSim(unittest.TestCase):
         sim.run()
 
         self.assertTrue(True)
+
+    def test_spice_src(self):
+        """Spice power source model"""
+
+        class ChargeConfig(CapacitorStorageSimConfig):
+            def callback(self, time: float):
+                self.src.connect(0)
+                for cap in self.caps:
+                    cap.connect(0)
+
+        cap_values = [10e-6, 100e-6]
+
+        src = ConstantSource(1, 0.1, duration=2, dt=1)
+        caps = [Capacitor(c) for c in cap_values]
+        sink = ConstantSink(0.1)
+
+        config = ChargeConfig(src, caps, sink, 2)
+
+        sim = CapacitorStorageSim(config)
+        sim.run()
+
+        self.assertGreater(sim.config.caps[0].voltage, 0.8)
+
+    def test_spice_sink(self):
+        """Spice power sink model"""
+
+        class ChargeDischargeConfig(CapacitorStorageSimConfig):
+            def callback(self, time: float):
+                # connect caps
+                for cap in self.caps:
+                    cap.connect(0)
+
+                if time < 0.5:
+                    self.src.connect(0)
+                    self.sink.disconnect(0)
+                elif time >= 0.5:
+                    self.src.disconnect(0)
+                    self.sink.connect(0)
+
+        cap_values = [10e-6, 100e-6]
+
+        src = ConstantSource(1, 0.00001, duration=2, dt=1)
+        caps = [Capacitor(c) for c in cap_values]
+        sink = ConstantSink(0.001)
+
+        config = ChargeDischargeConfig(src, caps, sink, 2)
+
+        sim = CapacitorStorageSim(config)
+        sim.run()
+        sim.plot()
+
+        self.assertLess(sim.config.caps[0].voltage, 0.3)
 
 
 if __name__ == "__main__":

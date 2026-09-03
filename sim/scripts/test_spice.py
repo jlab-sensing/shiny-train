@@ -13,9 +13,10 @@ from sim.models import (
     Capacitor,
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
-    Sink,
     ConstantSource,
+    Sink,
 )
+
 
 class MyConfig(CapacitorStorageSimConfig):
     def callback(self, time: float):

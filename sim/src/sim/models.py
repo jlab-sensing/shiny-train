@@ -6,20 +6,16 @@ can be controlled from outside the original function.
 
 import math
 import os
+from abc import ABC, abstractmethod
 
 import matplotlib.pyplot as plt
-import pandas as pd
 import numpy as np
-
-from math import pi, sin
-from abc import ABC, abstractmethod
-from PySpice.Spice.Netlist import Circuit
-from PySpice.Spice.NgSpice.Shared import NgSpiceShared
-from PySpice.Unit import *
-
+import pandas as pd
 import PySpice
 from cffi import FFI
-
+from PySpice.Spice.Netlist import Circuit
+from PySpice.Spice.NgSpice.Shared import NgSpiceShared
+from PySpice.Unit import u_kOhm, u_ms, u_Ohm, u_s
 
 caplib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cap.lib")
 
@@ -75,19 +71,54 @@ class SwitchedComponent:
 
         return self._sw_arr[idx]
 
+    def connected(self) -> bool:
+        """Checks if any swithes are connected
+
+        Returns:
+            bool
+        """
+
+        return any(self._sw_arr)
+
 
 class Capacitor(SwitchedComponent):
-    def __init__(self, farads: float, initial_voltage: float = 0.):
+    def __init__(
+        self,
+        farads: float,
+        v_min: float = 1.6,
+        v_max: float = 3.3,
+        leak_floor: float = 3e-6,
+        initial_voltage: float = 0.0,
+    ):
         """Initializes capacitor element.
 
         Args:
             farads: Farads
+            v_min: Minimum voltage allowed
+            v_max: Maximum voltage allowed
+            leak_floor: Minimum leakage
             initial_voltage: Forced voltage at start of sim
         """
 
         self.farads = farads
+        self.v_min = v_min
+        self.v_max = v_max
+        self.leak_floor = leak_floor
         self.initial_voltage = initial_voltage
-        self.voltage = 0.
+
+        self.voltage = 0
+
+    @property
+    def energy(self) -> float:
+        return self.voltage**2 * self.farads / 2
+
+    @property
+    def min_energy(self) -> float:
+        return self.v_min**2 * self.farads / 2
+
+    @property
+    def leakage(self):
+        return max(0.01 * self.farads * self.voltage, self.leak_floor)
 
 
 class Source(SwitchedComponent, ABC):
@@ -116,18 +147,39 @@ class Source(SwitchedComponent, ABC):
         assigned to self.data
         """
 
-        pass
+    def get_power(self, time: float) -> float:
+        """Gets the power consumption at a given timestep.
+
+        Args:
+            time: Number of seconds since the start of the sim.
+
+        Returns:
+            Power in watts.
+        """
+
+        return 0.1
+
+    def get_voltage(self) -> float:
+        """Gets the constant voltage level of the source
+
+        Returns:
+            Voltage in volts.
+        """
+
+        return 0.1
 
 
 class ConstantSource(Source):
-    def __init__(self, voltage: float, **kwargs):
+    def __init__(self, voltage: float, power: float, **kwargs):
         """Initial data for a constant voltage source.
 
         Args:
-            voltage: Voltage in volts
+            voltage: Voltage in volts.
+            power: Power supplied in watts.
         """
 
         self.voltage = voltage
+        self.power = power
 
         # this init must be after setting variables that are used in load_data.
         # The Source derived class calls the abstract method load_data so they
@@ -135,7 +187,7 @@ class ConstantSource(Source):
         Source.__init__(self, **kwargs)
 
     def load_data(self):
-        #steps = self.duration * self.sample_hz
+        # steps = self.duration * self.sample_hz
 
         curr_time = pd.Timestamp.now()
 
@@ -146,29 +198,25 @@ class ConstantSource(Source):
         timestamps = pd.date_range(
             start=start,
             end=end,
-            #periods=steps,
-            freq=pd.Timedelta(self.dt, "ms")
+            # periods=steps,
+            freq=pd.Timedelta(self.dt, "ms"),
         )
 
         # Generate voltage
         vs = np.ones(len(timestamps))
         vs *= self.voltage
 
-        self.data = pd.DataFrame({
-            'Timestamp': timestamps,
-            'Potential(V)': vs
-        })
+        self.data = pd.DataFrame({"Timestamp": timestamps, "Potential(V)": vs})
+
+    def get_voltage(self):
+        return self.voltage
+
+    def get_power(self):
+        return self.power
 
 
 class SineSource(Source):
-    def __init__(
-        self,
-        source_am,
-        source_os,
-        source_hz,
-        source_ph,
-        **kwargs
-    ):
+    def __init__(self, source_am, source_os, source_hz, source_ph, **kwargs):
         """Initializes the SineSource
 
         Args:
@@ -188,7 +236,6 @@ class SineSource(Source):
         # have to be set before the super call.
         Source.__init__(self, **kwargs)
 
-
     def load_data(self):
         sample_hz = 1 / self.dt
         steps = int(self.duration * sample_hz)
@@ -200,7 +247,7 @@ class SineSource(Source):
         timestamps = pd.date_range(
             start=pd.Timestamp.now(),
             periods=steps,
-            freq=pd.Timedelta(seconds=1 / sample_hz)
+            freq=pd.Timedelta(seconds=1 / sample_hz),
         )
 
         # Generate voltage
@@ -208,10 +255,7 @@ class SineSource(Source):
         vs *= self.source_am
         vs += self.source_os
 
-        self.data = pd.DataFrame({
-            'Timestamp': timestamps,
-            'Potential(V)': vs
-        })
+        self.data = pd.DataFrame({"Timestamp": timestamps, "Potential(V)": vs})
 
 
 class Sink(SwitchedComponent):
@@ -220,10 +264,70 @@ class Sink(SwitchedComponent):
     def __init__(self):
         pass
 
+    def get_power(self) -> float:
+        """Gets the current power draw of the sink.
+
+        Returns:
+            Power in W. Negative.
+        """
+
+        return 0.0
+
+
+class ConstantSink(Sink):
+    def __init__(self, power: float):
+        """Sets constant power draw on sink
+
+        Args:
+            power: Power in watts
+        """
+
+        self.power = power
+
+    def get_power(self) -> float:
+        """Gets power drain
+
+        Returns:
+            Power in watts.
+        """
+
+        return self.power
+
 
 class SMSink(Sink):
-    def __init__(self, **kwargs):
-        pass
+    def __init__(self, sink, **kwargs):
+        """
+        sm_states is a state machine instance representing an intermittent
+        computing platform with active and passive states
+
+        the active state cycles through the substates measure, analyze, and
+        save, each with a cost to execute, if power allows, else it sleeps
+
+        the passive state recharges until the wake threshold is reached,
+        then wakes
+        """
+        self.sm = sink
+
+    def run_sm(self):
+        self.sm.send("cycle")
+
+        current_id = self.sm._get_current_state_id()
+        if current_id == "sleep" and self.sm.charged():
+            # energy = self.sm.cap.energy
+            # min_energy = self.sm.cap.min_energy
+            # projected_energy = energy + self.sm.load_value * self.sm.remaining_time
+            #
+            # print(f'{self.sm.time:.6f}: waking ({energy}, {projected_energy}, {min_energy})')
+            self.sm.send("wake")
+
+    def get_power(self) -> float:
+        """Gets power consumption of current state.
+
+        Returns:
+            Power in W. Negative
+        """
+
+        return self.sm.load_value
 
 
 class CapacitorStorageSimConfig:
@@ -289,7 +393,8 @@ class CapacitorStorageSim:
         The simulation starts at time zero.
 
         The callback function has parameters time and voltages of each
-        capacitor. It returns a tuple for the load switch and switch state list
+        capacitor.
+        It returns a tuple for the load switch and switch state list
         that includes all capacitors.
         """
 
@@ -310,12 +415,26 @@ class CapacitorStorageSim:
             )
 
             # TODO Update to configured power source
+            # this is constant
             if node == "v_src":
-                voltage[0] = 1
+                voltage[0] = self.config.src.get_voltage()
 
-            # TODO Update for constant sink power
-            if node == "sink":
-                pass
+            if node == "v_pwr_src":
+                if self.config.src.connected():
+                    voltage[0] = self.config.src.get_power(time)
+                else:
+                    voltage[0] = 1e-9
+
+            if node == "v_pwr_sink":
+                # TODO (jtmadden): Update to actual voltage
+                if self.config.sink.get_power():
+                    voltage[0] = (3.3**2) / self.config.sink.get_power()
+                else:
+                    voltage[0] = (3.3**2) / 1e-9
+                # if self.config.sink.connected():
+                #    voltage[0] = self.config.sink.get_power()
+                # else:
+                #    voltage[0] = 1e-9
 
             # configure switches
             for n in range(self.config.p_lines):
@@ -353,9 +472,10 @@ class CapacitorStorageSim:
             Actual data example
                 data =
                 {'vinput#branch': 0j, 'v0#branch': 0j, 'v1#branch': 0j,
-                'l.x0.l1#branch': 0j, 'l.x1.l1#branch': 0j, 'x1.3': 0j, 'x1.2': 0j,
-                'c1+': 0j, 'vsw1+': 0j, 'x0.3': 0j, 'x0.2': 0j, 'c0+': 0j, 'vsw0+':
-                0j, 'output': 0j, 'input': 0j, 'time': (2e-05+0j)}
+                'l.x0.l1#branch': 0j, 'l.x1.l1#branch': 0j, 'x1.3': 0j,
+                'x1.2': 0j, 'c1+': 0j, 'vsw1+': 0j, 'x0.3': 0j, 'x0.2': 0j,
+                'c0+': 0j, 'vsw0+': 0j, 'output': 0j, 'input': 0j,
+                'time': (2e-05+0j)}
             """
 
             for idx, cap in enumerate(self.config.caps):
@@ -382,11 +502,16 @@ class CapacitorStorageSim:
 
         self.shared = self.CustomShared(config, send_data=True)
 
+        # limited min/max resistance for load
+        self.load_min_r = 1e-9
+        self.load_max_r = 1e9
+
     def _create_circuit(self, model: str = "C_real") -> Circuit:
         """Creates the circuit model.
 
-        Available fields for model is "C_real" and "C_ideal". At time of writing
-        the capacitor model incorperates "Resr", "Rleak", "Cval", "fo".
+        Available fields for model is "C_real" and "C_ideal".
+        At time of writing the capacitor model incorperates:
+            "Resr", "Rleak", "Cval", "fo".
 
         Args:
             model: Capacitor model
@@ -405,11 +530,16 @@ class CapacitorStorageSim:
         # on resistance = 1 Ohm
         circuit.model("S", "SW", vt=1, ron=1)
 
-        # input source
-        circuit.V("_src", "v_src_pos", circuit.gnd, "dc 0 external")
-        circuit.R(1, "v_src_pos", "src", 2.2 @ u_kOhm)
+        # old input model
+        # circuit.V("_src", "v_src_pos", circuit.gnd, "dc 0 external")
+        # circuit.R(1, "v_src_pos", "src", 2.2 @ u_kOhm)
 
-        # circuit.V("src") creates an element like Vsrc
+        # input source
+        # TODO Chance to the param for constant voltage source
+        circuit.V("_src", "v_src_pos", circuit.gnd, "dc 0 external")
+
+        circuit.V("_pwr_source", "v_pwr_source", circuit.gnd, "dc 0 external")
+        circuit.raw_spice += "R1 v_src_pos src {V(v_src_pos)**2/V(v_pwr_source)}\n"
 
         # input power switches
         for n in range(self.config.p_lines):
@@ -469,13 +599,16 @@ class CapacitorStorageSim:
                 model="S",
             )
 
-        # resistive load
-        circuit.R(2, "sink", circuit.gnd, 200 @ u_Ohm)
+        # old resistive load
+        # circuit.R(2, "sink", circuit.gnd, 200 @ u_Ohm)
+
+        # new voltage controlled resistive load (R = V^2 / P)
+        circuit.V("_pwr_sink", "v_pwr_sink", circuit.gnd, "dc 0 external")
+        circuit.raw_spice += "R2 sink gnd {v(v_pwr_sink)}\n"
 
         return circuit
 
-    def _simulate(self, circuit: Circuit):
-
+    def _simulate(self, circuit: Circuit, end_time: float = 2.0):
         simulator = circuit.simulator(
             temperature=25,
             nominal_temperature=25,
@@ -497,11 +630,12 @@ class CapacitorStorageSim:
 
         return analysis
 
-    def run(self):
+    def run(self, end_time: float = 2.0):
         """Run the simulation on a set of capacitor values.
 
         Args:
             caps: Capacitor array values
+            end_time: Simulation end time in seconds
         """
 
         self.circuit = self._create_circuit()
@@ -545,6 +679,7 @@ class CapacitorStorageSim:
         for ax in axs:
             ax.grid()
             ax.legend()
+            ax.set_ylim(-0.1, 1.1)
 
     def _plot_input_output(self):
         _, axs = plt.subplots(2, 1, sharex=True)
@@ -589,6 +724,7 @@ class CapacitorStorageSim:
             ax.set_ylabel("State")
             ax.grid()
             ax.legend()
+            ax.set_ylim(-0.1, 1.1)
 
     def _plot_power_lines(self):
         _, axs = plt.subplots(self.config.p_lines, sharex=True)
@@ -603,12 +739,63 @@ class CapacitorStorageSim:
             ax.grid()
             ax.legend()
 
+    def _plot_src_sink_power(self):
+        _, axs = plt.subplots(2, 1, sharex=True)
+
+        axs[0].set_title("Source/Sink Power")
+
+        axs[0].plot(self.analysis["v_pwr_source"], label="src")
+        axs[1].plot(self.analysis["v_pwr_sink"], label="sink")
+
+        for ax in axs:
+            ax.set_ylabel("Power (W)")
+
+        axs[1].set_xlabel("Time (ms)")
+
+        for ax in axs:
+            ax.grid()
+            ax.legend()
+
+    def _plot_src_sink_r(self):
+        _, axs = plt.subplots(2, 1, sharex=True)
+
+        axs[0].set_title("Source/Sink Resistance")
+
+        v_src_pos = self.analysis["v_src_pos"]
+        v_pwr_source = self.analysis["v_pwr_source"]
+
+        R_src = v_src_pos**2 / v_pwr_source
+
+        v_pwr_sink = self.analysis["v_pwr_sink"]
+
+        v_sink = self.analysis["sink"]
+
+        R_sink = v_pwr_sink**2 / v_sink
+
+        axs[0].plot(R_src, label="R_src")
+        axs[0].plot(v_src_pos, label="Source voltage")
+        axs[0].plot(v_pwr_source, label="Control voltage (W)")
+        axs[1].plot(R_sink, label="R_sink")
+        axs[1].plot(v_sink, label="Sink Voltage")
+        axs[1].plot(v_pwr_sink, label="Control voltage (W)")
+
+        for ax in axs:
+            ax.set_ylabel("Resistance (R)")
+
+        axs[1].set_xlabel("Time (ms)")
+
+        for ax in axs:
+            ax.grid()
+            ax.legend()
+
     def plot(self):
         self._plot_capacitors()
         self._plot_cap_switches()
         self._plot_input_output()
         self._plot_io_switches()
         self._plot_power_lines()
+        self._plot_src_sink_power()
+        self._plot_src_sink_r()
 
         plt.show(block=False)
         input("Press enter to close figures...")
@@ -731,14 +918,14 @@ def create_basic_model(model: str = "C_real", **kwargs) -> Circuit:
         "3",
         "source",
         "Net-_R3-Pad2_",
-        100 @ u_kΩ,
+        100 @ u_kOhm,
     )
 
     circuit.R(
         "1",
         "load",
         circuit.gnd,
-        200 @ u_Ω,
+        200 @ u_Ohm,
     )
 
     # Subcircuit capacitor
