@@ -11,6 +11,7 @@ from sim.models import (
     SineSource,
 )
 
+
 class MyConfig(CapacitorStorageSimConfig):
     def callback(self, time: float):
         # connect caps

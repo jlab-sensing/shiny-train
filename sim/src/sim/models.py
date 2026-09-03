@@ -23,10 +23,7 @@ from cffi import FFI
 from .state_machines import SinkSM
 
 
-caplib_path = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "cap.lib"
-)
+caplib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cap.lib")
 
 
 class SwitchedComponent:
@@ -97,7 +94,7 @@ class Capacitor(SwitchedComponent):
         v_min: float = 1.6,
         v_max: float = 3.3,
         leak_floor: float = 3e-6,
-        initial_voltage: float = 0.
+        initial_voltage: float = 0.0,
     ):
         """Initializes capacitor element.
 
@@ -117,18 +114,17 @@ class Capacitor(SwitchedComponent):
 
         self.voltage = 0
 
-
     @property
     def energy(self) -> float:
-        return self.voltage ** 2 * self.farads / 2
+        return self.voltage**2 * self.farads / 2
 
     @property
     def min_energy(self) -> float:
-        return self.v_min ** 2 * self.farads / 2
+        return self.v_min**2 * self.farads / 2
 
     @property
     def leakage(self):
-        return max(0.01*self.farads*self.voltage, self.leak_floor)
+        return max(0.01 * self.farads * self.voltage, self.leak_floor)
 
 
 class Source(SwitchedComponent, ABC):
@@ -178,7 +174,7 @@ class Source(SwitchedComponent, ABC):
             Voltage in volts.
         """
 
-        return 0.1;
+        return 0.1
 
 
 class ConstantSource(Source):
@@ -199,7 +195,7 @@ class ConstantSource(Source):
         Source.__init__(self, **kwargs)
 
     def load_data(self):
-        #steps = self.duration * self.sample_hz
+        # steps = self.duration * self.sample_hz
 
         curr_time = pd.Timestamp.now()
 
@@ -210,18 +206,15 @@ class ConstantSource(Source):
         timestamps = pd.date_range(
             start=start,
             end=end,
-            #periods=steps,
-            freq=pd.Timedelta(self.dt, "ms")
+            # periods=steps,
+            freq=pd.Timedelta(self.dt, "ms"),
         )
 
         # Generate voltage
         vs = np.ones(len(timestamps))
         vs *= self.voltage
 
-        self.data = pd.DataFrame({
-            'Timestamp': timestamps,
-            'Potential(V)': vs
-        })
+        self.data = pd.DataFrame({"Timestamp": timestamps, "Potential(V)": vs})
 
     def get_voltage(self):
         return self.voltage
@@ -231,14 +224,7 @@ class ConstantSource(Source):
 
 
 class SineSource(Source):
-    def __init__(
-        self,
-        source_am,
-        source_os,
-        source_hz,
-        source_ph,
-        **kwargs
-    ):
+    def __init__(self, source_am, source_os, source_hz, source_ph, **kwargs):
         """Initializes the SineSource
 
         Args:
@@ -258,7 +244,6 @@ class SineSource(Source):
         # have to be set before the super call.
         Source.__init__(self, **kwargs)
 
-
     def load_data(self):
         sample_hz = 1 / self.dt
         steps = int(self.duration * sample_hz)
@@ -270,7 +255,7 @@ class SineSource(Source):
         timestamps = pd.date_range(
             start=pd.Timestamp.now(),
             periods=steps,
-            freq=pd.Timedelta(seconds=1 / sample_hz)
+            freq=pd.Timedelta(seconds=1 / sample_hz),
         )
 
         # Generate voltage
@@ -278,10 +263,7 @@ class SineSource(Source):
         vs *= self.source_am
         vs += self.source_os
 
-        self.data = pd.DataFrame({
-            'Timestamp': timestamps,
-            'Potential(V)': vs
-        })
+        self.data = pd.DataFrame({"Timestamp": timestamps, "Potential(V)": vs})
 
 
 class Sink(SwitchedComponent):
@@ -297,7 +279,8 @@ class Sink(SwitchedComponent):
             Power in W. Negative.
         """
 
-        return 0.
+        return 0.0
+
 
 class ConstantSink(Sink):
     def __init__(self, power: float):
@@ -456,9 +439,9 @@ class CapacitorStorageSim:
                     voltage[0] = (3.3**2) / self.config.sink.get_power()
                 else:
                     voltage[0] = (3.3**2) / 1e-9
-                #if self.config.sink.connected():
+                # if self.config.sink.connected():
                 #    voltage[0] = self.config.sink.get_power()
-                #else:
+                # else:
                 #    voltage[0] = 1e-9
 
             # configure switches
@@ -556,8 +539,8 @@ class CapacitorStorageSim:
         circuit.model("S", "SW", vt=1, ron=1)
 
         # old input model
-        #circuit.V("_src", "v_src_pos", circuit.gnd, "dc 0 external")
-        #circuit.R(1, "v_src_pos", "src", 2.2 @ u_kOhm)
+        # circuit.V("_src", "v_src_pos", circuit.gnd, "dc 0 external")
+        # circuit.R(1, "v_src_pos", "src", 2.2 @ u_kOhm)
 
         # input source
         # TODO Chance to the param for constant voltage source
@@ -565,7 +548,6 @@ class CapacitorStorageSim:
 
         circuit.V("_pwr_source", "v_pwr_source", circuit.gnd, "dc 0 external")
         circuit.raw_spice += "R1 v_src_pos src {V(v_src_pos)**2/V(v_pwr_source)}\n"
-
 
         # input power switches
         for n in range(self.config.p_lines):
@@ -626,7 +608,7 @@ class CapacitorStorageSim:
             )
 
         # old resistive load
-        #circuit.R(2, "sink", circuit.gnd, 200 @ u_Ohm)
+        # circuit.R(2, "sink", circuit.gnd, 200 @ u_Ohm)
 
         # new voltage controlled resistive load (R = V^2 / P)
         circuit.V("_pwr_sink", "v_pwr_sink", circuit.gnd, "dc 0 external")
@@ -736,15 +718,13 @@ class CapacitorStorageSim:
 
         for n in range(self.config.p_lines):
             axs[ax_idx].plot(
-                self.analysis[f"ctrl_src_pwr{n}_pos"],
-                label=f"source, line {n}"
+                self.analysis[f"ctrl_src_pwr{n}_pos"], label=f"source, line {n}"
             )
             ax_idx += 1
 
         for n in range(self.config.p_lines):
             axs[ax_idx].plot(
-                self.analysis[f"ctrl_pwr{n}_sink_pos"],
-                label=f"sink, line {n}"
+                self.analysis[f"ctrl_pwr{n}_sink_pos"], label=f"sink, line {n}"
             )
             ax_idx += 1
 
@@ -789,8 +769,8 @@ class CapacitorStorageSim:
 
         axs[0].set_title("Source/Sink Resistance")
 
-        v_src_pos = self.analysis['v_src_pos']
-        v_pwr_source = self.analysis['v_pwr_source']
+        v_src_pos = self.analysis["v_src_pos"]
+        v_pwr_source = self.analysis["v_pwr_source"]
 
         R_src = v_src_pos**2 / v_pwr_source
 
@@ -798,7 +778,7 @@ class CapacitorStorageSim:
 
         v_sink = self.analysis["sink"]
 
-        R_sink = v_pwr_sink ** 2 / v_sink
+        R_sink = v_pwr_sink**2 / v_sink
 
         axs[0].plot(R_src, label="R_src")
         axs[0].plot(v_src_pos, label="Source voltage")
@@ -841,16 +821,12 @@ class SineShared(NgSpiceShared):
         self._pulsation = float(frequency.pulsation)
 
     def get_vsrc_data(self, voltage, time, node, ngspice_id):
-        self._logger.debug(
-            f"ngspice_id-{ngspice_id} get_vsrc_data @{time} node {node}"
-        )
+        self._logger.debug(f"ngspice_id-{ngspice_id} get_vsrc_data @{time} node {node}")
         voltage[0] = self._amplitude * math.sin(self._pulsation * time)
         return 0
 
     def get_isrc_data(self, current, time, node, ngspice_id):
-        self._logger.debug(
-            f"ngspice_id-{ngspice_id} get_isrc_data @{time} node {node}"
-        )
+        self._logger.debug(f"ngspice_id-{ngspice_id} get_isrc_data @{time} node {node}")
         current[0] = 1.0
         return 0
 

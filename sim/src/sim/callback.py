@@ -225,14 +225,10 @@ def build_model(
     )
 
     if energy_costs.shape != (N,):
-        raise ValueError(
-            "energy_costs must have shape (N,)"
-        )
+        raise ValueError("energy_costs must have shape (N,)")
 
     if leakage.shape != (K,):
-        raise ValueError(
-            "leakage must have shape (K,)"
-        )
+        raise ValueError("leakage must have shape (K,)")
 
     # ------------------------------------------------------------
     # Available energy in each capacitor.
@@ -241,11 +237,7 @@ def build_model(
     E_allowed = np.zeros(K, dtype=float)
 
     for i, cap in enumerate(caps):
-        E_allowed[i] = (
-            cap.farads
-            * (cap.voltage**2 - cap.v_min**2)
-            / 2
-        )
+        E_allowed[i] = cap.farads * (cap.voltage**2 - cap.v_min**2) / 2
 
     # ------------------------------------------------------------
     # Assignment energy:
@@ -253,20 +245,12 @@ def build_model(
     #     E_task_i + leakage_j
     # ------------------------------------------------------------
 
-    assignment_energy = (
-        energy_costs[:, np.newaxis]
-        + leakage[np.newaxis, :]
-    )
+    assignment_energy = energy_costs[:, np.newaxis] + leakage[np.newaxis, :]
 
-    feasibility = (
-        assignment_energy
-        <= E_allowed[np.newaxis, :]
-    )
+    feasibility = assignment_energy <= E_allowed[np.newaxis, :]
 
     if feasibility.shape != (N, K):
-        raise ValueError(
-            "feasibility must have shape (N, K)"
-        )
+        raise ValueError("feasibility must have shape (N, K)")
 
     if rewards is None:
         rewards = np.ones(N)
@@ -277,9 +261,7 @@ def build_model(
     )
 
     if rewards.shape != (N,):
-        raise ValueError(
-            "rewards must have shape (N,)"
-        )
+        raise ValueError("rewards must have shape (N,)")
 
     M1, M2, M3, M4, P = build_operators(N, K)
 
@@ -317,9 +299,7 @@ def build_model(
     # objective^T z
     # ------------------------------------------------------------
 
-    objective = np.asarray(
-        np.ones(K * (N + 1)) @ M1
-    ).ravel()
+    objective = np.asarray(np.ones(K * (N + 1)) @ M1).ravel()
 
     # ------------------------------------------------------------
     # Constraint 1:
@@ -343,9 +323,7 @@ def build_model(
 
     A_supply_assignment = M1 - M3
 
-    b_supply_assignment = np.zeros(
-        K * (N + 1)
-    )
+    b_supply_assignment = np.zeros(K * (N + 1))
 
     # ------------------------------------------------------------
     # Constraint 3:
@@ -365,13 +343,9 @@ def build_model(
     #     sum_j x_j <= M
     # ------------------------------------------------------------
 
-    supply_count_row = (
-        np.ones(K * (N + 1)) @ M2
-    )
+    supply_count_row = np.ones(K * (N + 1)) @ M2
 
-    A_supply_count = sp.csr_matrix(
-        supply_count_row
-    )
+    A_supply_count = sp.csr_matrix(supply_count_row)
 
     b_supply_count = np.array([M])
 
@@ -479,15 +453,10 @@ def _build_scip_model(
     m = A.shape[0]
 
     if b.shape != (m,):
-        raise ValueError(
-            f"b has shape {b.shape}; expected {(m,)}"
-        )
+        raise ValueError(f"b has shape {b.shape}; expected {(m,)}")
 
     if objective.shape != (n,):
-        raise ValueError(
-            f"objective has shape {objective.shape}; "
-            f"expected {(n,)}"
-        )
+        raise ValueError(f"objective has shape {objective.shape}; expected {(n,)}")
 
     # ------------------------------------------------------------
     # SCIP model
@@ -517,14 +486,10 @@ def _build_scip_model(
     # ------------------------------------------------------------
 
     for i in range(m):
-
         start = A.indptr[i]
         end = A.indptr[i + 1]
 
-        expr = quicksum(
-            float(A.data[k]) * z[A.indices[k]]
-            for k in range(start, end)
-        )
+        expr = quicksum(float(A.data[k]) * z[A.indices[k]] for k in range(start, end))
 
         model.addCons(
             expr <= float(b[i]),
@@ -536,9 +501,7 @@ def _build_scip_model(
     # ------------------------------------------------------------
 
     objective_expr = quicksum(
-        float(objective[j]) * z[j]
-        for j in range(n)
-        if objective[j] != 0.0
+        float(objective[j]) * z[j] for j in range(n) if objective[j] != 0.0
     )
 
     model.setObjective(
@@ -612,30 +575,21 @@ def solve_stage1_milp(
         z,
     )
 
-    objective_value = float(
-        model.objective @ solution
-    )
+    objective_value = float(model.objective @ solution)
 
     # SCIP statistics.
     nodes = scip.getNNodes()
 
-    wall_time_ms = (
-        time.perf_counter() - start
-    ) * 1000.0
+    wall_time_ms = (time.perf_counter() - start) * 1000.0
 
     return {
         "status": status,
-
         "objective": objective_value,
-
         "solution": solution,
-
         "wall_time_ms": wall_time_ms,
-
         # SCIP is not a simplex solver, so this does not
         # correspond to HiGHS's simplex_iteration_count.
         "iterations": None,
-
         "nodes": nodes,
     }
 
@@ -682,10 +636,7 @@ def solve_stage2_miqp(
     m = A.shape[0]
 
     if P.shape[1] != n:
-        raise ValueError(
-            f"load_operator has {P.shape[1]} columns; "
-            f"expected {n}"
-        )
+        raise ValueError(f"load_operator has {P.shape[1]} columns; expected {n}")
 
     # ------------------------------------------------------------
     # Build SCIP model
@@ -715,13 +666,11 @@ def solve_stage2_miqp(
     # ------------------------------------------------------------
 
     for i in range(A.shape[0]):
-
         start_idx = A.indptr[i]
         end_idx = A.indptr[i + 1]
 
         expr = quicksum(
-            float(A.data[k]) * z[A.indices[k]]
-            for k in range(start_idx, end_idx)
+            float(A.data[k]) * z[A.indices[k]] for k in range(start_idx, end_idx)
         )
 
         scip.addCons(
@@ -738,9 +687,7 @@ def solve_stage2_miqp(
     # ------------------------------------------------------------
 
     primary_expr = quicksum(
-        float(model.objective[j]) * z[j]
-        for j in range(n)
-        if model.objective[j] != 0.0
+        float(model.objective[j]) * z[j] for j in range(n) if model.objective[j] != 0.0
     )
 
     scip.addCons(
@@ -755,14 +702,10 @@ def solve_stage2_miqp(
     # ------------------------------------------------------------
 
     load_exprs = [
-        quicksum(float(P[i, j]) * z[j] for j in range(n))
-        for i in range(P.shape[0])
+        quicksum(float(P[i, j]) * z[j] for j in range(n)) for i in range(P.shape[0])
     ]
 
-    quadratic_objective = quicksum(
-        load_expr * load_expr
-        for load_expr in load_exprs
-    )
+    quadratic_objective = quicksum(load_expr * load_expr for load_expr in load_exprs)
 
     set_nonlinear_objective(
         scip,
@@ -808,45 +751,26 @@ def solve_stage2_miqp(
         dtype=np.float64,
     )
 
-    load_objective = float(
-        loads @ loads
-    )
+    load_objective = float(loads @ loads)
 
-    primary_objective = float(
-        model.objective @ solution
-    )
+    primary_objective = float(model.objective @ solution)
 
     nodes = scip.getNNodes()
 
-    wall_time_ms = (
-        time.perf_counter() - start
-    ) * 1000.0
+    wall_time_ms = (time.perf_counter() - start) * 1000.0
 
     return {
         "status": status,
-
         # Primary objective remains the number
         # of assigned tasks.
         "objective": primary_objective,
-
         "primary_objective": primary_objective,
-
         "load_objective": load_objective,
-
         "solution": solution,
-
         "capacitor_loads": loads,
-
-        "max_capacitor_load": (
-            float(np.max(loads))
-            if loads.size
-            else 0.0
-        ),
-
+        "max_capacitor_load": (float(np.max(loads)) if loads.size else 0.0),
         "wall_time_ms": wall_time_ms,
-
         "iterations": None,
-
         "nodes": nodes,
     }
 
@@ -874,24 +798,17 @@ def solve_assignment(
     # Stage 1
     # ------------------------------------------------------------
 
-    stage1 = solve_stage1_milp(
-        model
-    )
+    stage1 = solve_stage1_milp(model)
 
     if stage1["status"] not in (
         "OPTIMAL",
         "FEASIBLE",
     ):
-        print(
-            "returning stage 1;"
-            " stage 1 not optimal or feasible"
-        )
+        print("returning stage 1; stage 1 not optimal or feasible")
 
         return stage1
 
-    optimal_tasks = int(
-        round(stage1["objective"])
-    )
+    optimal_tasks = int(round(stage1["objective"]))
 
     # print(
     #     f"Stage 1 optimal assignments: "
@@ -911,10 +828,7 @@ def solve_assignment(
         "OPTIMAL",
         "FEASIBLE",
     ):
-        print(
-            "returning stage 1;"
-            " stage 2 not optimal or feasible"
-        )
+        print("returning stage 1; stage 2 not optimal or feasible")
 
         return stage1
 
@@ -922,22 +836,13 @@ def solve_assignment(
     # Preserve Stage 1 metadata
     # ------------------------------------------------------------
 
-    stage2["stage1_objective"] = (
-        stage1["objective"]
-    )
+    stage2["stage1_objective"] = stage1["objective"]
 
-    stage2["stage1_wall_time_ms"] = (
-        stage1["wall_time_ms"]
-    )
+    stage2["stage1_wall_time_ms"] = stage1["wall_time_ms"]
 
-    stage2["stage2_wall_time_ms"] = (
-        stage2["wall_time_ms"]
-    )
+    stage2["stage2_wall_time_ms"] = stage2["wall_time_ms"]
 
-    stage2["wall_time_ms"] = (
-        stage1["wall_time_ms"]
-        + stage2["wall_time_ms"]
-    )
+    stage2["wall_time_ms"] = stage1["wall_time_ms"] + stage2["wall_time_ms"]
 
     # print(
     #     "Stage 2 selected."
@@ -966,15 +871,9 @@ class TaskAssigner:
         time,
         floor=3e-6,
     ):
-        leakage = [
-            c.leakage
-            for c in self.caps
-        ]
+        leakage = [c.leakage for c in self.caps]
 
-        energy_costs = [
-            t.cost * t.duration
-            for t in self.tasks
-        ]
+        energy_costs = [t.cost * t.duration for t in self.tasks]
 
         model = build_model(
             N=self.N,
@@ -994,21 +893,11 @@ class TaskAssigner:
         if config is None:
             return False
 
-        min_task_energy = min(
-            t.cost * t.duration
-            for t in self.tasks
-        )
+        min_task_energy = min(t.cost * t.duration for t in self.tasks)
 
         for cap in config.caps:
             if cap.voltage >= cap.v_min:
-                available_energy = (
-                    cap.farads
-                    * (
-                        cap.voltage**2
-                        - cap.v_min**2
-                    )
-                    / 2
-                )
+                available_energy = cap.farads * (cap.voltage**2 - cap.v_min**2) / 2
 
                 if available_energy >= min_task_energy:
                     return True
@@ -1058,32 +947,20 @@ class LeacSimConfig(CapacitorStorageSimConfig):
 
         # Apply previous assignment to the state machine.
         if self.assignment is not None:
-
-            pairs = (
-                self._apply_assignment_to_SM(
-                    self.assignment
-                )
-            )
+            pairs = self._apply_assignment_to_SM(self.assignment)
             assigned_cap_idx = None
 
-            active_substate = (
-                self.sm._get_task_state_id()
-            )
+            active_substate = self.sm._get_task_state_id()
 
             if active_substate is not None:
-
                 for cap_idx, task_idx in pairs:
-
-                    if task_idx == _TASK_IDX[
-                        active_substate
-                    ]:
+                    if task_idx == _TASK_IDX[active_substate]:
                         assigned_cap_idx = cap_idx
                         break
 
             # Assigned capacitor -> sink.
             # All others -> source.
             for i, cap in enumerate(self.caps):
-
                 if i == assigned_cap_idx:
                     cap.disconnect(0)
                     cap.connect(1)
@@ -1095,14 +972,9 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         # Solve a new assignment when scheduling
         # becomes possible.
         if self.assigner.should_schedule(self):
+            result = self.assigner.assign(time)
 
-            result = self.assigner.assign(
-                time
-            )
-
-            self.assignment = result[
-                "solution"
-            ]
+            self.assignment = result["solution"]
 
         self._update_sink()
 
@@ -1125,10 +997,7 @@ class LeacSimConfig(CapacitorStorageSimConfig):
             dtype=float,
         )
 
-        expected_size = (
-            self.assigner.K
-            * (self.assigner.N + 1)
-        )
+        expected_size = self.assigner.K * (self.assigner.N + 1)
 
         if assignment.size != expected_size:
             raise ValueError(
@@ -1160,34 +1029,15 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         self,
         assignment,
     ):
-        pairs = (
-            self._decode_assignment_result(
-                assignment
-            )
-        )
+        pairs = self._decode_assignment_result(assignment)
 
-        active_substate = (
-            self.sm._get_task_state_id()
-        )
+        active_substate = self.sm._get_task_state_id()
 
         if active_substate is not None:
-
             for cap_idx, task_idx in pairs:
-
-                if task_idx == _TASK_IDX[
-                    active_substate
-                ]:
-
-                    if (
-                        self.caps[cap_idx].voltage
-                        > self.caps[
-                            cap_idx
-                        ].v_min
-                    ):
-
-                        self.sm.cap = (
-                            self.caps[cap_idx]
-                        )
+                if task_idx == _TASK_IDX[active_substate]:
+                    if self.caps[cap_idx].voltage > self.caps[cap_idx].v_min:
+                        self.sm.cap = self.caps[cap_idx]
 
                         print(
                             f"{self.sm.time:.6f}: "
@@ -1212,7 +1062,6 @@ class LeacSimConfig(CapacitorStorageSimConfig):
 
 
 if __name__ == "__main__":
-
     M = 3
 
     CONST_VOLTAGE = 3.3
@@ -1254,9 +1103,7 @@ if __name__ == "__main__":
         ),
     ]
 
-    sink = SMSink(
-        init_SinkSM(caps[0])
-    )
+    sink = SMSink(init_SinkSM(caps[0]))
 
     config = LeacSimConfig(
         src,
@@ -1273,8 +1120,6 @@ if __name__ == "__main__":
 
     sim.run()
 
-    print(
-        f"runtime: {time.time() - start}"
-    )
+    print(f"runtime: {time.time() - start}")
 
     sim.plot()
