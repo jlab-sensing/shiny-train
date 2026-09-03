@@ -41,9 +41,6 @@ import time
 
 from dataclasses import dataclass
 
-import highspy
-from highspy import HighsVarType
-
 import numpy as np
 import scipy.sparse as sp
 
@@ -633,7 +630,7 @@ def solve_stage2_miqp(
     P = model.load_operator.tocsr()
 
     n = A.shape[1]
-    m = A.shape[0]
+    # m = A.shape[0]
 
     if P.shape[1] != n:
         raise ValueError(f"load_operator has {P.shape[1]} columns; expected {n}")

@@ -7,8 +7,6 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-import pdb
-
 DC_VOLTS = 3.3
 
 
@@ -122,7 +120,7 @@ class SinkSM(StateChart):
             energy = self.cap.energy
             min_energy = self.cap.min_energy
             self.remaining_time = task.duration - self.time + self.task_start
-            projected_energy = energy + task.cost * remaining_time
+            projected_energy = energy + task.cost * self.remaining_time
 
             if projected_energy <= min_energy:
                 print(

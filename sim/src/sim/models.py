@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 
-from math import pi, sin
 from abc import ABC, abstractmethod
 from PySpice.Spice.Netlist import Circuit
 from PySpice.Spice.NgSpice.Shared import NgSpiceShared
@@ -20,7 +19,6 @@ from PySpice.Unit import *
 import PySpice
 from cffi import FFI
 
-from .state_machines import SinkSM
 
 
 caplib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cap.lib")
