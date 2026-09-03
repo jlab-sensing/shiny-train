@@ -38,32 +38,33 @@ class SinkSM(StateChart):
     time = None
     task_start = 0.0
     remaining_time = 0.0
-    load_value = 0.0     # OUTPUT: the energy consumption for next timestep
+    load_value = -4.64e-3 * DC_VOLTS     # OUTPUT: the energy consumption for next timestep
 
     class task(State.Compound):
         measure = State(
             "measure",
             value=Task(
-                cost=-11.68e-3 * DC_VOLTS,
+                cost=11.68e-3 * DC_VOLTS,
                 duration=0.511)
             )
         tx = State(
             "tx",
             value=Task(
-                cost=-86.52e-3 * DC_VOLTS,
+                cost=86.52e-3 * DC_VOLTS,
                 duration=0.285)
             )
         rx = State(
             "rx",
             value=Task(
-                cost=-20.03e-3 * DC_VOLTS,
+                cost=20.03e-3 * DC_VOLTS,
                 duration=0.927)
             )
         h = HistoryState(type="deep")
 
     sleep = State(
         "sleep",
-        initial=True
+        initial=True,
+        value=4.64e-3 * DC_VOLTS
     )
 
     # Self-transitions while executing, advance when done
@@ -166,7 +167,7 @@ class TestSinkSM(SinkSM):
             if projected_energy <= min_energy:
                 self.raise_("pause")
             else:
-                self.cap.voltage = ((energy + task.cost * 0.05) * 2 / self.cap.farads)**0.5
+                self.cap.voltage = ((energy - task.cost * 0.05) * 2 / self.cap.farads)**0.5
 
 def init_SinkSM(cap, testing=True):
     if testing:

@@ -452,8 +452,10 @@ class CapacitorStorageSim:
 
             if node == "v_pwr_sink":
                 # TODO (jtmadden): Update to actual voltage
-                voltage[0] = (3.3**2) / self.config.sink.get_power()
-
+                if self.config.sink.get_power():
+                    voltage[0] = (3.3**2) / self.config.sink.get_power()
+                else:
+                    voltage[0] = (3.3**2) / 1e-9
                 #if self.config.sink.connected():
                 #    voltage[0] = self.config.sink.get_power()
                 #else:
