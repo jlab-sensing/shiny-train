@@ -6,20 +6,16 @@ can be controlled from outside the original function.
 
 import math
 import os
+from abc import ABC, abstractmethod
 
 import matplotlib.pyplot as plt
-import pandas as pd
 import numpy as np
-
-from abc import ABC, abstractmethod
-from PySpice.Spice.Netlist import Circuit
-from PySpice.Spice.NgSpice.Shared import NgSpiceShared
-from PySpice.Unit import *
-
+import pandas as pd
 import PySpice
 from cffi import FFI
-
-
+from PySpice.Spice.Netlist import Circuit
+from PySpice.Spice.NgSpice.Shared import NgSpiceShared
+from PySpice.Unit import u_kOhm, u_ms, u_Ohm, u_s
 
 caplib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cap.lib")
 
@@ -150,8 +146,6 @@ class Source(SwitchedComponent, ABC):
         Output is a pandas dataframe with 2 columns: time and power harvested,
         assigned to self.data
         """
-
-        pass
 
     def get_power(self, time: float) -> float:
         """Gets the power consumption at a given timestep.
@@ -924,14 +918,14 @@ def create_basic_model(model: str = "C_real", **kwargs) -> Circuit:
         "3",
         "source",
         "Net-_R3-Pad2_",
-        100 @ u_kΩ,
+        100 @ u_kOhm,
     )
 
     circuit.R(
         "1",
         "load",
         circuit.gnd,
-        200 @ u_Ω,
+        200 @ u_Ohm,
     )
 
     # Subcircuit capacitor

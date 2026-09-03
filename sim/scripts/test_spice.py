@@ -13,8 +13,8 @@ from sim.models import (
     Capacitor,
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
-    Sink,
     ConstantSource,
+    Sink,
 )
 
 

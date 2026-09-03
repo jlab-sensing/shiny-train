@@ -1,8 +1,7 @@
-#!/usr/bin/env python3
-
-from statemachine import State, StateChart, HistoryState
-from dataclasses import dataclass
 import warnings
+from dataclasses import dataclass
+
+from statemachine import HistoryState, State, StateChart
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -132,7 +131,6 @@ class SinkSM(StateChart):
                 print(
                     f"{self.time:.6f}:     working ({energy}, {projected_energy}, {min_energy})"
                 )
-                pass
         else:
             print(f"unexpected source.id: {source.id}")
 

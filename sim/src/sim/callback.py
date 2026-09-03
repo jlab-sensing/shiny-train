@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 """
 Matrix-form assignment model using HiGHS.
 
@@ -38,12 +36,10 @@ Stage 2 distributes those tasks as evenly as possible across capacitors.
 from __future__ import annotations
 
 import time
-
 from dataclasses import dataclass
 
 import numpy as np
 import scipy.sparse as sp
-
 from pyscipopt import Model, quicksum
 from pyscipopt.recipes.nonlinear import set_nonlinear_objective
 
@@ -51,11 +47,10 @@ from .models import (
     Capacitor,
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
-    SMSink,
     ConstantSource,
+    SMSink,
 )
 from .state_machines import Task, init_SinkSM
-
 
 _TASK_IDX = {"measure": 0, "tx": 1, "rx": 2}
 
@@ -805,7 +800,7 @@ def solve_assignment(
 
         return stage1
 
-    optimal_tasks = int(round(stage1["objective"]))
+    optimal_tasks = round(stage1["objective"])
 
     # print(
     #     f"Stage 1 optimal assignments: "
