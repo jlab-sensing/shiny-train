@@ -18,6 +18,7 @@ dependencies = [
     "matplotlib",
     "ortools",
     "scipy",
+    "h5py",
 ]
 
 [project.optional-dependencies]

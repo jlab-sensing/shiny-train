@@ -8,6 +8,7 @@ import math
 import os
 from abc import ABC, abstractmethod
 
+import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -122,7 +123,7 @@ class Capacitor(SwitchedComponent):
 
 
 class Source(SwitchedComponent, ABC):
-    def __init__(self, duration: float, dt: float):
+    def __init__(self, duration: float, dt: float, voltage: float = 3.3):
         """Initialize power source.
 
         Args:
@@ -133,19 +134,7 @@ class Source(SwitchedComponent, ABC):
 
         self.duration = duration
         self.dt = dt
-
-        self.data = None
-        self.load_data()
-
-    @abstractmethod
-    def load_data(self):
-        """
-        Subclasses must implement load_data, subject to the file types
-        they read from.
-
-        Output is a pandas dataframe with 2 columns: time and power harvested,
-        assigned to self.data
-        """
+        self.voltage = voltage
 
     def get_power(self, time: float) -> float:
         """Gets the power consumption at a given timestep.
@@ -166,11 +155,11 @@ class Source(SwitchedComponent, ABC):
             Voltage in volts.
         """
 
-        return 0.1
+        return self.voltage
 
 
 class ConstantSource(Source):
-    def __init__(self, voltage: float, power: float, **kwargs):
+    def __init__(self, power: float, **kwargs):
         """Initial data for a constant voltage source.
 
         Args:
@@ -178,7 +167,6 @@ class ConstantSource(Source):
             power: Power supplied in watts.
         """
 
-        self.voltage = voltage
         self.power = power
 
         # this init must be after setting variables that are used in load_data.
@@ -186,37 +174,13 @@ class ConstantSource(Source):
         # have to be set before the super call.
         Source.__init__(self, **kwargs)
 
-    def load_data(self):
-        # steps = self.duration * self.sample_hz
-
-        curr_time = pd.Timestamp.now()
-
-        start = curr_time
-        end = curr_time + pd.Timedelta(self.duration, "s")
-
-        # Datetime timestamps
-        timestamps = pd.date_range(
-            start=start,
-            end=end,
-            # periods=steps,
-            freq=pd.Timedelta(self.dt, "ms"),
-        )
-
-        # Generate voltage
-        vs = np.ones(len(timestamps))
-        vs *= self.voltage
-
-        self.data = pd.DataFrame({"Timestamp": timestamps, "Potential(V)": vs})
-
-    def get_voltage(self):
-        return self.voltage
-
-    def get_power(self):
+    def get_power(self, time: float):
         return self.power
 
 
 class SineSource(Source):
-    def __init__(self, source_am, source_os, source_hz, source_ph, **kwargs):
+    def __init__(self, source_am: float, source_os: float, source_hz: float,
+                 source_ph: float, **kwargs):
         """Initializes the SineSource
 
         Args:
@@ -226,36 +190,100 @@ class SineSource(Source):
             source_ph: phase offset of the source in radians
         """
 
+        # Check offset is greater than amplitude to prevent "negative" power
+        # readings
+        if (source_am > source_os):
+            raise RuntimeError("Amplitude cannot be greater than offset.")
+
         self.source_am = source_am
         self.source_os = source_os
         self.source_hz = source_hz
         self.source_ph = source_ph
+
 
         # this init must be after setting variables that are used in load_data.
         # The Source derived class calls the abstract method load_data so they
         # have to be set before the super call.
         Source.__init__(self, **kwargs)
 
-    def load_data(self):
-        sample_hz = 1 / self.dt
-        steps = int(self.duration * sample_hz)
-
-        # Elapsed time in seconds, used for generating the waveform
-        ts = np.linspace(0, self.duration, steps, endpoint=False)
-
-        # Datetime timestamps
-        timestamps = pd.date_range(
-            start=pd.Timestamp.now(),
-            periods=steps,
-            freq=pd.Timedelta(seconds=1 / sample_hz),
-        )
-
-        # Generate voltage
-        vs = np.sin(2 * np.pi * self.source_hz * ts + self.source_ph)
+    def get_power(self, time: float):
+        vs = math.sin(2. * math.pi * self.source_hz * time + self.source_ph)
         vs *= self.source_am
         vs += self.source_os
 
-        self.data = pd.DataFrame({"Timestamp": timestamps, "Potential(V)": vs})
+        return vs
+
+
+class BonitoSource(Source):
+    def __init__(
+        self,
+        filename : str,
+        name : str = "node0",
+        offset: float = 0,
+        duration: float = 0,
+        **kwargs
+    ):
+        """Initializes a bonito energy source.
+
+        Kwarg "voltage" is required.
+
+        Passing kwargs "dt" and "duration" override calculated values from the
+        dataset. DO NOT do unless you know what you're doing.
+
+        Args:
+            file: Path to h5 data file.
+            name: Name of the node.
+            offset: Dataset time at start of simulation.
+            duration: Time to run simulation from offset.
+
+        Raises:
+            IndexErorr when the combination of offset and duration exceeds the
+            time for the given dataset.
+        """
+
+        self.filename = filename
+        self.name = name
+
+        # Open file
+        self.file = h5py.File(filename, "r")
+
+        self.offset = offset
+        self.duration = duration
+
+        # Convert time inputs to indexes
+        dt = self.file["time"][1] - self.file["time"][0]
+        self.idx = int(offset / dt)
+        self.max_idx = int(duration / dt) + self.idx
+
+        # Check max index is not out of range of data
+        if (self.max_idx > len(self.file["time"])):
+            raise IndexError("Max time exceeds input data.")
+
+        # Initialize the source class
+        Source.__init__(self, duration=duration, dt=dt, **kwargs)
+
+    def __del__(self):
+        """Closes the open file."""
+
+        self.file.close()
+
+    def get_power(self, time: float):
+        """Gets the next power checking against the current sim time
+
+
+        Args:
+            time: Simulation time.
+        """
+
+        # check that simulation and data class are synced
+        dt = (self.file["time"][self.idx] - self.offset) - time
+        if (abs(dt) >= self.dt):
+            raise RuntimeError("Simulation and data timestamp is not synced.")
+
+        # get power from file
+        power = self.file["data"][self.name][self.idx]
+        self.idx += 1
+        return power
 
 
 class Sink(SwitchedComponent):
@@ -272,6 +300,8 @@ class Sink(SwitchedComponent):
         """
 
         return 0.0
+
+
 
 
 class ConstantSink(Sink):
