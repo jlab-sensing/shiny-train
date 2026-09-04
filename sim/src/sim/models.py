@@ -6,12 +6,10 @@ can be controlled from outside the original function.
 
 import math
 import os
-from abc import ABC, abstractmethod
+from abc import ABC
 
 import h5py
 import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
 import PySpice
 from cffi import FFI
 from PySpice.Spice.Netlist import Circuit
@@ -179,8 +177,14 @@ class ConstantSource(Source):
 
 
 class SineSource(Source):
-    def __init__(self, source_am: float, source_os: float, source_hz: float,
-                 source_ph: float, **kwargs):
+    def __init__(
+        self,
+        source_am: float,
+        source_os: float,
+        source_hz: float,
+        source_ph: float,
+        **kwargs,
+    ):
         """Initializes the SineSource
 
         Args:
@@ -192,7 +196,7 @@ class SineSource(Source):
 
         # Check offset is greater than amplitude to prevent "negative" power
         # readings
-        if (source_am > source_os):
+        if source_am > source_os:
             raise RuntimeError("Amplitude cannot be greater than offset.")
 
         self.source_am = source_am
@@ -200,14 +204,13 @@ class SineSource(Source):
         self.source_hz = source_hz
         self.source_ph = source_ph
 
-
         # this init must be after setting variables that are used in load_data.
         # The Source derived class calls the abstract method load_data so they
         # have to be set before the super call.
         Source.__init__(self, **kwargs)
 
     def get_power(self, time: float):
-        vs = math.sin(2. * math.pi * self.source_hz * time + self.source_ph)
+        vs = math.sin(2.0 * math.pi * self.source_hz * time + self.source_ph)
         vs *= self.source_am
         vs += self.source_os
 
@@ -217,11 +220,11 @@ class SineSource(Source):
 class BonitoSource(Source):
     def __init__(
         self,
-        filename : str,
-        name : str = "node0",
+        filename: str,
+        name: str = "node0",
         offset: float = 0,
         duration: float = 0,
-        **kwargs
+        **kwargs,
     ):
         """Initializes a bonito energy source.
 
@@ -256,7 +259,7 @@ class BonitoSource(Source):
         self.max_idx = int(duration / dt) + self.idx
 
         # Check max index is not out of range of data
-        if (self.max_idx > len(self.file["time"])):
+        if self.max_idx > len(self.file["time"]):
             raise IndexError("Max time exceeds input data.")
 
         # Initialize the source class
@@ -277,7 +280,7 @@ class BonitoSource(Source):
 
         # check that simulation and data class are synced
         dt = (self.file["time"][self.idx] - self.offset) - time
-        if (abs(dt) >= self.dt):
+        if abs(dt) >= self.dt:
             raise RuntimeError("Simulation and data timestamp is not synced.")
 
         # get power from file
@@ -300,8 +303,6 @@ class Sink(SwitchedComponent):
         """
 
         return 0.0
-
-
 
 
 class ConstantSink(Sink):

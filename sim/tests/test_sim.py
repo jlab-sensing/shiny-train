@@ -30,7 +30,7 @@ class TestSim(unittest.TestCase):
     def test_constant_source(self):
         cap_values = [10e-6, 100e-6]
 
-        src = ConstantSource(0.1, voltage=1., duration=2, dt=1)
+        src = ConstantSource(0.1, voltage=1.0, duration=2, dt=1)
         caps = [Capacitor(c) for c in cap_values]
         sink = ConstantSink(0.1)
 
@@ -44,7 +44,7 @@ class TestSim(unittest.TestCase):
     def test_sine_source(self):
         cap_values = [10e-6, 100e-6]
 
-        src = SineSource(0.2, 0.5, 10, 0, voltage=1., duration=2, dt=1)
+        src = SineSource(0.2, 0.5, 10, 0, voltage=1.0, duration=2, dt=1)
         caps = [Capacitor(c) for c in cap_values]
         sink = ConstantSink(0.1)
 
@@ -59,7 +59,7 @@ class TestSim(unittest.TestCase):
         # Initially tried with 100 but took 60s to complete
         cap_values = [100e-6 for _ in range(10)]
 
-        src = ConstantSource(0.1, voltage=1., duration=2, dt=1)
+        src = ConstantSource(0.1, voltage=1.0, duration=2, dt=1)
         caps = [Capacitor(c) for c in cap_values]
         sink = ConstantSink(0.1)
 
@@ -73,7 +73,7 @@ class TestSim(unittest.TestCase):
     def test_many_lines(self):
         cap_values = [10e-6, 100e-6]
 
-        src = ConstantSource(0.1, voltage=1., duration=2, dt=1)
+        src = ConstantSource(0.1, voltage=1.0, duration=2, dt=1)
         caps = [Capacitor(c) for c in cap_values]
         sink = ConstantSink(0.1)
 
@@ -95,7 +95,7 @@ class TestSim(unittest.TestCase):
 
         cap_values = [10e-6, 100e-6]
 
-        src = ConstantSource(0.1, voltage=1., duration=2, dt=1)
+        src = ConstantSource(0.1, voltage=1.0, duration=2, dt=1)
         caps = [Capacitor(c) for c in cap_values]
         sink = ConstantSink(0.1)
 
@@ -124,7 +124,7 @@ class TestSim(unittest.TestCase):
 
         cap_values = [10e-6, 100e-6]
 
-        src = ConstantSource(0.00001, voltage=1., duration=2, dt=1)
+        src = ConstantSource(0.00001, voltage=1.0, duration=2, dt=1)
         caps = [Capacitor(c) for c in cap_values]
         sink = ConstantSink(0.001)
 

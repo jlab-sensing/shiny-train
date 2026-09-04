@@ -8,7 +8,6 @@ Implements a basic voltage divider with a source controlled by python code
 import matplotlib.pyplot as plt
 from PySpice.Logging import Logging
 from PySpice.Unit import *
-
 from sim.models import SineShared, create_example_shared_model
 
 logger = Logging.setup_logging()
