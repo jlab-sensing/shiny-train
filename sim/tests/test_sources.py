@@ -34,8 +34,11 @@ class TestSources(unittest.TestCase):
 
         self.assertAlmostEqual(src.get_voltage(), 1.65)
         self.assertAlmostEqual(src.get_power(0.0), 5.69625264568467e-06)
+        src.next()
         self.assertAlmostEqual(src.get_power(1.0e-05), 7.096335328652324e-06)
+        src.next()
         self.assertAlmostEqual(src.get_power(2.0e-05), 7.09716456e-06)
+        src.next()
         self.assertAlmostEqual(src.get_power(3.0e-05), 6.89668724e-06)
 
     def test_bonito_name(self):
@@ -76,6 +79,7 @@ class TestSources(unittest.TestCase):
                            downsample=10000)
 
         self.assertAlmostEqual(src.get_power(0.0), 3.652359120783698e-06)
+        src.next()
         self.assertAlmostEqual(src.get_power(0.1), 1.4404980150767657e-05)
 
     def test_bonito_offset(self):

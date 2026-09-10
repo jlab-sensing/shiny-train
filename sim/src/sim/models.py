@@ -6,7 +6,7 @@ can be controlled from outside the original function.
 
 import math
 import os
-from abc import ABC
+from abc import ABC, abstractmethod
 
 import h5py
 import matplotlib.pyplot as plt
@@ -155,6 +155,11 @@ class Source(SwitchedComponent, ABC):
 
         return self.voltage
 
+    def next(self):
+        """Function called when the simulation time is advanced."""
+
+        return
+
 
 class ConstantSource(Source):
     def __init__(self, power: float, **kwargs):
@@ -286,14 +291,19 @@ class BonitoSource(Source):
         """
 
         # check that simulation and data class are synced
-        dt = (self.file["time"][self.idx] - self.offset) - time
+        sim_time = (self.file["time"][self.idx] - self.offset)
+        dt = sim_time - time
         if abs(dt) >= self.dt:
-            raise RuntimeError("Simulation and data timestamp is not synced.")
+            raise RuntimeError(f"Simulation {sim_time} and data timestamp {time} is not synced.")
 
         # get power from file
         power = self.file["data"][self.name][self.idx]
-        self.idx += self.downsample
         return power
+
+    def next(self):
+        """Advances to the next index in the data."""
+
+        self.idx += self.downsample
 
 
 class Sink(SwitchedComponent):
@@ -452,6 +462,8 @@ class CapacitorStorageSim:
                 f"ngspice_id-{ngspice_id} get_vsrc_data @{time} node {node}"
             )
 
+            print(f"vsrc time: {time}")
+
             # TODO Update to configured power source
             # this is constant
             if node == "v_src":
@@ -459,7 +471,6 @@ class CapacitorStorageSim:
 
             if node == "v_pwr_source":
                 connected = self.config.src.connected()
-                import pdb; pdb.set_trace()
                 if connected:
                     power = self.config.src.get_power(time)
                     voltage[0] = power
@@ -525,6 +536,9 @@ class CapacitorStorageSim:
             time = data["time"].real
 
             self.config.callback(time)
+
+            # advance to next power timestamp if needed
+            self.config.src.next()
 
             return 0
 
@@ -663,8 +677,10 @@ class CapacitorStorageSim:
             ic_kwargs[f"c{idx}_pos"] = cap.initial_voltage
         simulator.initial_condition(**ic_kwargs)
 
+
+
         analysis = simulator.transient(
-            step_time=self.config.src.dt @ u_ms,
+            step_time=self.config.src.dt @ u_s,
             end_time=self.config.src.duration @ u_s,
             use_initial_condition=True,
         )
