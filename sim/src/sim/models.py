@@ -224,9 +224,14 @@ class BonitoSource(Source):
         name: str = "node0",
         offset: float = 0,
         duration: float = 0,
+        downsample: int = 1000,
         **kwargs,
     ):
         """Initializes a bonito energy source.
+
+        Downsampling is implemented as a zero order hold of the index until the
+        next data point is requested. It means we are skipping over data points
+        rather than doing any type of averaging.
 
         Kwarg "voltage" is required.
 
@@ -238,6 +243,7 @@ class BonitoSource(Source):
             name: Name of the node.
             offset: Dataset time at start of simulation.
             duration: Time to run simulation from offset.
+            downsample: Ratio to downsample datapoints.
 
         Raises:
             IndexErorr when the combination of offset and duration exceeds the
@@ -252,9 +258,10 @@ class BonitoSource(Source):
 
         self.offset = offset
         self.duration = duration
+        self.downsample = downsample
 
         # Convert time inputs to indexes
-        dt = self.file["time"][1] - self.file["time"][0]
+        dt = (self.file["time"][1] - self.file["time"][0]) * self.downsample
         self.idx = int(offset / dt)
         self.max_idx = int(duration / dt) + self.idx
 
@@ -285,7 +292,7 @@ class BonitoSource(Source):
 
         # get power from file
         power = self.file["data"][self.name][self.idx]
-        self.idx += 1
+        self.idx += self.downsample
         return power
 
 
@@ -450,9 +457,12 @@ class CapacitorStorageSim:
             if node == "v_src":
                 voltage[0] = self.config.src.get_voltage()
 
-            if node == "v_pwr_src":
-                if self.config.src.connected():
-                    voltage[0] = self.config.src.get_power(time)
+            if node == "v_pwr_source":
+                connected = self.config.src.connected()
+                import pdb; pdb.set_trace()
+                if connected:
+                    power = self.config.src.get_power(time)
+                    voltage[0] = power
                 else:
                     voltage[0] = 1e-9
 

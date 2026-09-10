@@ -30,7 +30,7 @@ class TestSources(unittest.TestCase):
         script_dir = os.path.dirname(os.path.abspath(__file__))
         data_path = os.path.join(script_dir, "..", "data", "bonito", "pwr_cars.h5")
 
-        src = BonitoSource(data_path, voltage=1.65)
+        src = BonitoSource(data_path, voltage=1.65, downsample=1)
 
         self.assertAlmostEqual(src.get_voltage(), 1.65)
         self.assertAlmostEqual(src.get_power(0.0), 5.69625264568467e-06)
@@ -44,7 +44,7 @@ class TestSources(unittest.TestCase):
         script_dir = os.path.dirname(os.path.abspath(__file__))
         data_path = os.path.join(script_dir, "..", "data", "bonito", "pwr_cars.h5")
 
-        src = BonitoSource(data_path, name="node3", voltage=2.7)
+        src = BonitoSource(data_path, name="node3", voltage=2.7, downsample=1)
 
         self.assertAlmostEqual(src.get_voltage(), 2.7)
         self.assertAlmostEqual(src.get_power(0.0), 3.652359120783698e-06)
@@ -55,7 +55,7 @@ class TestSources(unittest.TestCase):
         script_dir = os.path.dirname(os.path.abspath(__file__))
         data_path = os.path.join(script_dir, "..", "data", "bonito", "pwr_cars.h5")
 
-        src = BonitoSource(data_path, name="node3", voltage=2.7)
+        src = BonitoSource(data_path, name="node3", voltage=2.7, downsample=1)
 
         self.assertAlmostEqual(src.get_voltage(), 2.7)
 
@@ -64,6 +64,19 @@ class TestSources(unittest.TestCase):
         src.get_power(0.95e-5)
         with self.assertRaises(RuntimeError):
             src.get_power(4.0e-5)
+
+    def test_bonito_downsample(self):
+        """Check if downsample correctly gets the next datapoint."""
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        data_path = os.path.join(script_dir, "..", "data", "bonito", "pwr_cars.h5")
+
+        # dataset is known to be 1e-5 dt, downsample to 0.1s
+        src = BonitoSource(data_path, name="node3", voltage=2.7,
+                           downsample=10000)
+
+        self.assertAlmostEqual(src.get_power(0.0), 3.652359120783698e-06)
+        self.assertAlmostEqual(src.get_power(0.1), 1.4404980150767657e-05)
 
     def test_bonito_offset(self):
         """Check we can successfully set the offset."""
