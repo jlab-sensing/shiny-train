@@ -22,7 +22,7 @@ class MyConfig(CapacitorStorageSimConfig):
         for cap in self.caps:
             cap.connect(0)
 
-        if time < 0.5:
+        if time < 20:
             self.src.connect(0)
             self.sink.disconnect(0)
         elif time >= 0.5:

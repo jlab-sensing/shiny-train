@@ -290,11 +290,17 @@ class BonitoSource(Source):
             time: Simulation time.
         """
 
+        # iterate until we get to the next timestamp
+        # TODO (jmadden173): Can implement some sort of binary search to make
+        # this go after
+        while (self.file["time"][self.idx] < time):
+            self.idx += self.downsample
+
         # check that simulation and data class are synced
-        sim_time = (self.file["time"][self.idx] - self.offset)
-        dt = sim_time - time
-        if abs(dt) >= self.dt:
-            raise RuntimeError(f"Simulation {sim_time} and data timestamp {time} is not synced.")
+        #sim_time = (self.file["time"][self.idx] - self.offset)
+        #dt = sim_time - time
+        #if abs(dt) >= self.dt:
+        #    raise RuntimeError(f"Simulation ({sim_time}) and data timestamp ({time}) is not synced.")
 
         # get power from file
         power = self.file["data"][self.name][self.idx]
@@ -303,7 +309,7 @@ class BonitoSource(Source):
     def next(self):
         """Advances to the next index in the data."""
 
-        self.idx += self.downsample
+        #self.idx += self.downsample
 
 
 class Sink(SwitchedComponent):
@@ -461,8 +467,6 @@ class CapacitorStorageSim:
             self._logger.debug(
                 f"ngspice_id-{ngspice_id} get_vsrc_data @{time} node {node}"
             )
-
-            print(f"vsrc time: {time}")
 
             # TODO Update to configured power source
             # this is constant
@@ -676,8 +680,6 @@ class CapacitorStorageSim:
         for idx, cap in enumerate(self.config.caps):
             ic_kwargs[f"c{idx}_pos"] = cap.initial_voltage
         simulator.initial_condition(**ic_kwargs)
-
-
 
         analysis = simulator.transient(
             step_time=self.config.src.dt @ u_s,
