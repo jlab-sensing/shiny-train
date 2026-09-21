@@ -5,10 +5,10 @@
 import os
 
 from sim.models import (
+    BonitoSource,
     Capacitor,
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
-    BonitoSource,
     Sink,
 )
 
@@ -43,11 +43,11 @@ class MyConfig(CapacitorStorageSimConfig):
 cap_values = [10e-6, 100e-6]
 
 
-
 script_dir = os.path.dirname(os.path.abspath(__file__))
 data_path = os.path.join(script_dir, "..", "data", "bonito", "pwr_cars.h5")
-src = BonitoSource(data_path, name="node0", voltage=3.3, downsample=10000,
-                   duration=30.)
+src = BonitoSource(
+    data_path, name="node0", voltage=3.3, downsample=10000, duration=30.0
+)
 
 caps = [Capacitor(c) for c in cap_values]
 sink = Sink()

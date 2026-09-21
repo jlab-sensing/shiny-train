@@ -6,7 +6,7 @@ can be controlled from outside the original function.
 
 import math
 import os
-from abc import ABC, abstractmethod
+from abc import ABC
 
 import h5py
 import matplotlib.pyplot as plt
@@ -293,13 +293,13 @@ class BonitoSource(Source):
         # iterate until we get to the next timestamp
         # TODO (jmadden173): Can implement some sort of binary search to make
         # this go after
-        while (self.file["time"][self.idx] < time):
+        while self.file["time"][self.idx] < time:
             self.idx += self.downsample
 
         # check that simulation and data class are synced
-        #sim_time = (self.file["time"][self.idx] - self.offset)
-        #dt = sim_time - time
-        #if abs(dt) >= self.dt:
+        # sim_time = (self.file["time"][self.idx] - self.offset)
+        # dt = sim_time - time
+        # if abs(dt) >= self.dt:
         #    raise RuntimeError(f"Simulation ({sim_time}) and data timestamp ({time}) is not synced.")
 
         # get power from file
@@ -309,7 +309,7 @@ class BonitoSource(Source):
     def next(self):
         """Advances to the next index in the data."""
 
-        #self.idx += self.downsample
+        # self.idx += self.downsample
 
 
 class Sink(SwitchedComponent):

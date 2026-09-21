@@ -75,8 +75,7 @@ class TestSources(unittest.TestCase):
         data_path = os.path.join(script_dir, "..", "data", "bonito", "pwr_cars.h5")
 
         # dataset is known to be 1e-5 dt, downsample to 0.1s
-        src = BonitoSource(data_path, name="node3", voltage=2.7,
-                           downsample=10000)
+        src = BonitoSource(data_path, name="node3", voltage=2.7, downsample=10000)
 
         self.assertAlmostEqual(src.get_power(0.0), 3.652359120783698e-06)
         src.next()
