@@ -17,7 +17,6 @@ from PySpice.Spice.Netlist import Circuit
 from PySpice.Spice.NgSpice.Shared import NgSpiceShared
 from PySpice.Unit import u_kOhm, u_ms, u_Ohm, u_s
 
-caplib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cap.lib")
 
 
 class SwitchedComponent:
@@ -82,8 +81,14 @@ class SwitchedComponent:
 
 
 @dataclass
-class Capacitor(SwitchedComponent):
+class BaseCapacitor(SwitchedComponent):
     """Initializes capacitor element.
+
+
+    Available fields for model is "C_real" and "C_ideal".
+    At time of writing the capacitor model incorperates the following as args:
+        "Resr", "Rleak", "Cval", "fo".
+
 
     Attributes:
         farads: Farads
@@ -101,8 +106,8 @@ class Capacitor(SwitchedComponent):
     _leakage: float = 3e-6
     initial_voltage: float = 0.0
     voltage: float = 0.
-    model: str = "C_real"
-    library: str = "cap.lib"
+    model: str = ""
+    library: str = ""
 
     @property
     def energy(self) -> float:
@@ -115,6 +120,60 @@ class Capacitor(SwitchedComponent):
     @property
     def leakage(self) -> float:
         return self._leakage
+
+    def library_realpath(self) -> str:
+        """Get the resolved path of the library."""
+
+        file_path = os.path.abspath(__file__)
+        spice_path = os.path.join(os.path.dirname(file_path), "spice")
+        lib_path = os.path.join(spice_path, self.library)
+
+        if not os.path.exists(lib_path):
+            raise FileNotFoundError(f"Library does not exist at {lib_path}")
+
+        return lib_path
+
+    def model_kwargs(self):
+        """Gets kwargs needed for spice model parameters"""
+
+        return {}
+
+
+@dataclass
+class Capacitor(BaseCapacitor):
+    """Simplified real capacitor with adjustable characteristics.
+
+    Attributes:
+        r_esr: Equivalent series resistance.
+        r_leak: Leakage resistance.
+        fo: Resonant frequency.
+    """
+
+    r_esr: float = 0.03
+    r_leak: float = 100e12
+    fo: float = 1e6
+
+    model: str = "C_real"
+    library: str = "cap.lib"
+
+    def model_kwargs(self):
+        return {
+            "Resr": self.r_esr,
+            "Rleak": self.r_leak,
+            "Cval": self.farads,
+            "fo": self.fo,
+        }
+
+
+@dataclass
+class IdealCapacitor(BaseCapacitor):
+    model: str = "C_ideal"
+    library: str = "cap.lib"
+
+    def model_kwargs(self):
+        return {
+            "C": self.farads,
+        }
 
 
 @dataclass
@@ -138,10 +197,10 @@ class PanasonicCapacitors:
         """Conductive polymer aluminium capacitors."""
 
         @dataclass
-        class C100uF(Capacitor):
+        class C100uF(BaseCapacitor):
             farads: float = 100e-6
-            library = "EEFSX0G101ER.lib"
-            model = "EEFSX0G101ER"
+            library: str = "EEFSX0G101ER.lib"
+            model: str = "EEFSX0G101ER"
 
             @property
             def leakage(self) -> float:
@@ -593,15 +652,8 @@ class CapacitorStorageSim:
         self.load_min_r = 1e-9
         self.load_max_r = 1e9
 
-    def _create_circuit(self, model: str = "C_real") -> Circuit:
+    def _create_circuit(self) -> Circuit:
         """Creates the circuit model.
-
-        Available fields for model is "C_real" and "C_ideal".
-        At time of writing the capacitor model incorperates:
-            "Resr", "Rleak", "Cval", "fo".
-
-        Args:
-            model: Capacitor model
 
         Returns:
             Circuit model object
@@ -609,8 +661,12 @@ class CapacitorStorageSim:
 
         circuit = Circuit("Capacitor Array")
 
-        # capacitor models
-        circuit.include(caplib_path)
+        # include necessary capacitor libraries
+        included_libraries = []
+        for cap in self.config.caps:
+            if cap.library_realpath() not in included_libraries:
+                circuit.include(cap.library_realpath())
+                included_libraries.append(cap.library_realpath())
 
         # switch model
         # threshold = 1 V
@@ -666,7 +722,8 @@ class CapacitorStorageSim:
                 )
 
             # capacitor
-            circuit.X(idx, model, f"c{idx}_pos", circuit.gnd, Cval=cap.farads)
+            circuit.X(idx, cap.model, f"c{idx}_pos", circuit.gnd,
+                      **cap.model_kwargs())
 
         # output power switches
         for n in range(self.config.p_lines):
