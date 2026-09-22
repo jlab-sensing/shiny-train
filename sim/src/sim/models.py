@@ -7,6 +7,7 @@ can be controlled from outside the original function.
 import math
 import os
 from abc import ABC
+from dataclasses import dataclass
 
 import h5py
 import matplotlib.pyplot as plt
@@ -80,32 +81,28 @@ class SwitchedComponent:
         return any(self._sw_arr)
 
 
+@dataclass
 class Capacitor(SwitchedComponent):
-    def __init__(
-        self,
-        farads: float,
-        v_min: float = 1.6,
-        v_max: float = 3.3,
-        leak_floor: float = 3e-6,
-        initial_voltage: float = 0.0,
-    ):
-        """Initializes capacitor element.
+    """Initializes capacitor element.
 
-        Args:
-            farads: Farads
-            v_min: Minimum voltage allowed
-            v_max: Maximum voltage allowed
-            leak_floor: Minimum leakage
-            initial_voltage: Forced voltage at start of sim
-        """
+    Attributes:
+        farads: Farads
+        v_min: Minimum voltage allowed
+        v_max: Maximum voltage allowed
+        leakage: Leakage current in A
+        initial_voltage: Forced voltage at start of sim
+        voltage: Internal updated voltage that should not be touched
+        model: Spice model that is used
+    """
 
-        self.farads = farads
-        self.v_min = v_min
-        self.v_max = v_max
-        self.leak_floor = leak_floor
-        self.initial_voltage = initial_voltage
-
-        self.voltage = 0
+    farads: float
+    v_min: float = 1.6
+    v_max: float = 3.3
+    _leakage: float = 3e-6
+    initial_voltage: float = 0.0
+    voltage: float = 0.
+    model: str = "C_real"
+    library: str = "cap.lib"
 
     @property
     def energy(self) -> float:
@@ -116,8 +113,39 @@ class Capacitor(SwitchedComponent):
         return self.v_min**2 * self.farads / 2
 
     @property
+    def leakage(self) -> float:
+        return self._leakage
+
+
+@dataclass
+class LeacsCapacitor(Capacitor):
+    """Leacs style capacitor model.
+
+    Assumes the leakage current is determined by `0.1 * C * V` with a minimum
+    at the `leak_floor`.
+    """
+
+    leak_floor: float = 3e-6
+
+    @property
     def leakage(self):
         return max(0.01 * self.farads * self.voltage, self.leak_floor)
+
+
+
+class PanasonicCapacitors:
+    class SPCAP:
+        """Conductive polymer aluminium capacitors."""
+
+        @dataclass
+        class C100uF(Capacitor):
+            farads: float = 100e-6
+            library = "EEFSX0G101ER.lib"
+            model = "EEFSX0G101ER"
+
+            @property
+            def leakage(self) -> float:
+                return 0.1 * self.farads * self.voltage
 
 
 class Source(SwitchedComponent, ABC):
