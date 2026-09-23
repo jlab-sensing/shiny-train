@@ -191,20 +191,172 @@ class LeacsCapacitor(Capacitor):
         return max(0.01 * self.farads * self.voltage, self.leak_floor)
 
 
-
 class PanasonicCapacitors:
+    """Collection of Panasonic capacitors.
+
+    Collected from: https://industrial.panasonic.com/ww/downloads/simulation-data
+
+    These were selected based on the following criteria:
+        - For a given arch (Polymer Aluminium, Aluminium electrolytic, etc) the
+          lowest ESR was chosen. This was done because ESR was given in the
+          table and the leakage current was not.
+        - The steps was determined by E6 values.
+        - The max voltage had to be above 3.3V.
+    """
+
     class SPCAP:
         """Conductive polymer aluminium capacitors."""
 
         @dataclass
         class C100uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/ABE0000/ABE0000C79.pdf
+            """
+
             farads: float = 100e-6
+            v_max: float = 4.
             library: str = "EEFSX0G101ER.lib"
             model: str = "EEFSX0G101ER"
 
             @property
             def leakage(self) -> float:
                 return 0.1 * self.farads * self.voltage
+
+        @dataclass
+        class C150uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/ABE0000/ABE0000C79.pdf
+            """
+
+            farads: float = 150e-6
+            v_max: float = 4.
+            library: str = "EEFSX0G151E7.lib"
+            model: str = "EEFSX0G151E7"
+
+            @property
+            def leakage(self) -> float:
+                return 0.1 * self.farads * self.voltage
+
+        @dataclass
+        class C220uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/ABE0000/ABE0000C79.pdf
+            """
+
+            farads: float = 220e-6
+            v_max: float = 4.
+            library: str = "EEFSX0G221ER.lib"
+            model: str = "EEFSX0G221ER"
+
+            @property
+            def leakage(self) -> float:
+                return 0.1 * self.farads * self.voltage
+
+        @dataclass
+        class C330uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/ABE0000/ABE0000C79.pdf
+            """
+
+            farads: float = 330e-6
+            v_max: float = 4.
+            library: str = "EEFSX0G331XE.lib"
+            model: str = "EEFSX0G331XE"
+
+            @property
+            def leakage(self) -> float:
+                return 0.1 * self.farads * self.voltage
+
+        @dataclass
+        class C470uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/ABE0000/ABE0000C106.pdf
+            """
+
+            farads: float = 470e-6
+            v_max: float = 4.
+            library: str = "ECGSY0G471R.lib"
+            model: str = "ECGSY0G471R"
+
+            @property
+            def leakage(self) -> float:
+                return 0.1 * self.farads * self.voltage
+
+
+    class POSCAP:
+        """Conductive Polymer Tantalum Solid Capacitors"""
+
+        @dataclass
+        class C100uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/AAA8000/AAA8000C74.pdf
+            """
+
+            farads: float = 100e-6
+            v_max: float = 6.3
+            _leakage: float = 63e-6
+            library: str = "6TCE100MI.lib"
+            model: str = "6TCE100MI"
+
+        @dataclass
+        class C150uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/AAA8000/AAA8000C74.pdf
+            """
+
+            farads: float = 150e-6
+            v_max: float = 6.3
+            _leakage: float = 94.5e-6
+            library: str = "6TCE150MF.lib"
+            model: str = "6TCE150MF"
+
+        @dataclass
+        class C220uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/AAA8000/AAA8000C74.pdf
+            """
+
+            farads: float = 220e-6
+            v_max: float = 6.3
+            _leakage: float = 138.6e-6
+            library: str = "6TCF220ML.lib"
+            model: str = "6TCF220ML"
+
+        @dataclass
+        class C330uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/AAA8000/AAA8000C74.pdf
+            """
+
+            farads: float = 330e-6
+            v_max: float = 6.3
+            _leakage: float = 207.9e-6
+            library: str = "6TCF330M9L.lib"
+            model: str = "6TCF330M9L"
+
+        @dataclass
+        class C470uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/AAA8000/AAA8000C74.pdf
+            """
+
+            farads: float = 470e-6
+            v_max: float = 4.0
+            _leakage: float = 188.0e-6
+            library: str = "4TCF470ML.lib"
+            model: str = "4TCF470ML"
+
+        @dataclass
+        class C680uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/AAA8000/AAA8000C74.pdf
+            """
+
+            farads: float = 680e-6
+            v_max: float = 4.0
+            _leakage: float = 272.0e-6
+            library: str = "4TCF470ML.lib"
+            model: str = "4TCF470ML"
 
 
 class Source(SwitchedComponent, ABC):

@@ -8,8 +8,14 @@ https://www.ecircuitcenter.com/Calc/Cap_Model/CapModelCalc1.html
 
 ## Panasonic
 
+The helper script `extract_panasonic_model.sh` extracts the `.lib` from the downloaded zip.
+
 https://industrial.panasonic.com/ww/downloads/simulation-data
 
 ## Murata
 
 https://ds.murata.com/simsurfing/polymercapacitors.html?lcid=en-us&md5=87c10f7e405b0d67bc00f2d0907f6cc5
+
+## Yageo/KEMET
+
+https://ksim3.kemet.com/capacitor-simulation
