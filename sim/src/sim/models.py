@@ -18,7 +18,6 @@ from PySpice.Spice.NgSpice.Shared import NgSpiceShared
 from PySpice.Unit import u_kOhm, u_ms, u_Ohm, u_s
 
 
-
 class SwitchedComponent:
     """Metaclass for objects that are connected to n number of switches.
     Implements logic to connect, disconnect, and get the current state of each
@@ -105,7 +104,7 @@ class BaseCapacitor(SwitchedComponent):
     v_max: float = 3.3
     _leakage: float = 3e-6
     initial_voltage: float = 0.0
-    voltage: float = 0.
+    voltage: float = 0.0
     model: str = ""
     library: str = ""
 
@@ -214,7 +213,7 @@ class PanasonicCapacitors:
             """
 
             farads: float = 100e-6
-            v_max: float = 4.
+            v_max: float = 4.0
             library: str = "EEFSX0G101ER.lib"
             model: str = "EEFSX0G101ER"
 
@@ -229,7 +228,7 @@ class PanasonicCapacitors:
             """
 
             farads: float = 150e-6
-            v_max: float = 4.
+            v_max: float = 4.0
             library: str = "EEFSX0G151E7.lib"
             model: str = "EEFSX0G151E7"
 
@@ -244,7 +243,7 @@ class PanasonicCapacitors:
             """
 
             farads: float = 220e-6
-            v_max: float = 4.
+            v_max: float = 4.0
             library: str = "EEFSX0G221ER.lib"
             model: str = "EEFSX0G221ER"
 
@@ -259,7 +258,7 @@ class PanasonicCapacitors:
             """
 
             farads: float = 330e-6
-            v_max: float = 4.
+            v_max: float = 4.0
             library: str = "EEFSX0G331XE.lib"
             model: str = "EEFSX0G331XE"
 
@@ -274,14 +273,13 @@ class PanasonicCapacitors:
             """
 
             farads: float = 470e-6
-            v_max: float = 4.
+            v_max: float = 4.0
             library: str = "ECGSY0G471R.lib"
             model: str = "ECGSY0G471R"
 
             @property
             def leakage(self) -> float:
                 return 0.1 * self.farads * self.voltage
-
 
     class POSCAP:
         """Conductive Polymer Tantalum Solid Capacitors"""
@@ -874,8 +872,7 @@ class CapacitorStorageSim:
                 )
 
             # capacitor
-            circuit.X(idx, cap.model, f"c{idx}_pos", circuit.gnd,
-                      **cap.model_kwargs())
+            circuit.X(idx, cap.model, f"c{idx}_pos", circuit.gnd, **cap.model_kwargs())
 
         # output power switches
         for n in range(self.config.p_lines):
@@ -1157,6 +1154,7 @@ def create_basic_model(model: str = "C_real", **kwargs) -> Circuit:
 
     # Include capacitor subcircuit library
     # TODO update to a relative path
+    caplib_path = os.path.join(os.path.dir(os.path.abspath(__file__)), "spice")
     circuit.include(caplib_path)
 
     # Switch models

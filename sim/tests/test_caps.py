@@ -2,14 +2,15 @@ import unittest
 
 from sim.models import (
     Capacitor,
-    IdealCapacitor,
-    LeacsCapacitor,
-    PanasonicCapacitors,
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
     ConstantSink,
     ConstantSource,
+    IdealCapacitor,
+    LeacsCapacitor,
+    PanasonicCapacitors,
 )
+
 
 class MyConfig(CapacitorStorageSimConfig):
     def callback(self, time: float):
@@ -23,6 +24,7 @@ class MyConfig(CapacitorStorageSimConfig):
         elif time >= 0.5:
             self.src.disconnect(0)
             self.sink.connect(0)
+
 
 class TestCaps(unittest.TestCase):
     def test_generic(self):
@@ -39,7 +41,7 @@ class TestCaps(unittest.TestCase):
 
         self.assertTrue(True)
 
-    def  test_ideal(self):
+    def test_ideal(self):
         cap_values = [10e-6, 100e-6]
 
         src = ConstantSource(0.1, voltage=1.0, duration=2, dt=1)
@@ -91,6 +93,7 @@ class TestCaps(unittest.TestCase):
         sim.run()
 
         self.assertTrue(True)
+
 
 if __name__ == "__main__":
     unittest.main()
