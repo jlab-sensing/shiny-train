@@ -445,6 +445,7 @@ class SineSource(Source):
         self.source_os = source_os
         self.source_hz = source_hz
         self.source_ph = source_ph
+        self.index = -1
 
         # this init must be after setting variables that are used in load_data.
         # The Source derived class calls the abstract method load_data so they
@@ -548,10 +549,12 @@ class BonitoSource(Source):
 
         # self.idx += self.downsample
 
+    def get_voltage(self):
+        self.index += 1
+        return self.data.iloc[self.index, 1]
+
 
 class Sink(SwitchedComponent):
-    # TODO: subclass with computational state machine (states and costs)
-    # TODO: step through states in callback
     def __init__(self):
         pass
 

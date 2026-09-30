@@ -36,7 +36,7 @@ class SinkSM(StateChart):
     time = None
     task_start = 0.0
     remaining_time = 0.0
-    load_value = -4.64e-3 * DC_VOLTS  # OUTPUT: the energy consumption for next timestep
+    load_value = 4.64e-3 * DC_VOLTS  # OUTPUT: the energy consumption for next timestep
 
     class task(State.Compound):
         measure = State("measure", value=Task(cost=11.68e-3 * DC_VOLTS, duration=0.511))
