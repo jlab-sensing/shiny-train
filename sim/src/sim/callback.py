@@ -1097,21 +1097,21 @@ if __name__ == "__main__":
         4e-3,
     ]
 
-    src = ConstantSource(
-        3.3,
-        0.05,
-        duration=3,
-        dt=1,
-    )
-
-    # src = SineSource(
-    #     3.25,
-    #     1.70,
-    #     2.00,
-    #     0.00,
-    #     duration=1,
-    #     dt=0.01,
+    # src = ConstantSource(
+    #     3.3,
+    #     0.05,
+    #     duration=3,
+    #     dt=1,
     # )
+
+    src = SineSource(
+        3.25,
+        1.70,
+        2.00,
+        0.00,
+        duration=1,
+        dt=0.01,
+    )
 
     caps = [
         Capacitor(

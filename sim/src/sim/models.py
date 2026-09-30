@@ -260,7 +260,8 @@ class SineSource(Source):
 
     def get_voltage(self):
         self.index += 1
-        return self.data.iloc[self.index,1]
+        return self.data.iloc[self.index, 1]
+
 
 class Sink(SwitchedComponent):
     def __init__(self):
