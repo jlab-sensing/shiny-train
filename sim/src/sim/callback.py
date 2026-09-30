@@ -47,7 +47,9 @@ from .models import (
     Capacitor,
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
+    ConstantSource,
     SineSource,
+    BonitoSource,
     SMSink,
 )
 from .state_machines import Task, init_SinkSM
@@ -1092,25 +1094,30 @@ if __name__ == "__main__":
 
     cap_values = [
         4e-3,
-        4e-3,
-        4e-3,
+        1e-6,
+        # 4e-4,
     ]
 
-    # src = ConstantSource(
-    #     3.3,
-    #     0.05,
-    #     duration=3,
-    #     dt=1,
-    # )
-
-    src = SineSource(
-        3.25,
-        1.70,
-        2.00,
-        0.00,
-        duration=1,
+    src = ConstantSource(
+        0.05,
+        duration=10,
         dt=0.01,
     )
+
+    # src = SineSource(
+    #     1.70e-2,
+    #     1.70e-2,
+    #     2.00,
+    #     0.00,
+    #     duration=100,
+    #     dt=0.01,
+    # )
+
+    # src = BonitoSource(
+    #     '/home/mwmaster/catch/pwr_cars.h5',
+    #     duration=3600,
+    #     downsample=30000
+    # )
 
     caps = [
         Capacitor(
@@ -1123,15 +1130,15 @@ if __name__ == "__main__":
 
     tasks = [  # bookkeeping for LeacSimConfig; SMSink is hardcoded with identical Tasks
         Task(
-            cost=-11.68e-3 * CONST_VOLTAGE,
+            cost=11.68e-3 * CONST_VOLTAGE,
             duration=0.511,
         ),
         Task(
-            cost=-86.52e-3 * CONST_VOLTAGE,
+            cost=86.52e-3 * CONST_VOLTAGE,
             duration=0.285,
         ),
         Task(
-            cost=-20.03e-3 * CONST_VOLTAGE,
+            cost=20.03e-3 * CONST_VOLTAGE,
             duration=0.937,
         ),
     ]

@@ -445,7 +445,6 @@ class SineSource(Source):
         self.source_os = source_os
         self.source_hz = source_hz
         self.source_ph = source_ph
-        self.index = -1
 
         # this init must be after setting variables that are used in load_data.
         # The Source derived class calls the abstract method load_data so they
@@ -543,15 +542,6 @@ class BonitoSource(Source):
         # get power from file
         power = self.file["data"][self.name][self.idx]
         return power
-
-    def next(self):
-        """Advances to the next index in the data."""
-
-        # self.idx += self.downsample
-
-    def get_voltage(self):
-        self.index += 1
-        return self.data.iloc[self.index, 1]
 
 
 class Sink(SwitchedComponent):
