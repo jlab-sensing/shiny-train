@@ -47,7 +47,6 @@ from .models import (
     Capacitor,
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
-    ConstantSource,
     SineSource,
     SMSink,
 )
