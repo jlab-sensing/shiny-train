@@ -7,6 +7,7 @@ can be controlled from outside the original function.
 import math
 import os
 from abc import ABC
+from dataclasses import dataclass
 
 import h5py
 import matplotlib.pyplot as plt
@@ -15,8 +16,6 @@ from cffi import FFI
 from PySpice.Spice.Netlist import Circuit
 from PySpice.Spice.NgSpice.Shared import NgSpiceShared
 from PySpice.Unit import u_kOhm, u_ms, u_Ohm, u_s
-
-caplib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cap.lib")
 
 
 class SwitchedComponent:
@@ -80,32 +79,34 @@ class SwitchedComponent:
         return any(self._sw_arr)
 
 
-class Capacitor(SwitchedComponent):
-    def __init__(
-        self,
-        farads: float,
-        v_min: float = 1.6,
-        v_max: float = 3.3,
-        leak_floor: float = 3e-6,
-        initial_voltage: float = 0.0,
-    ):
-        """Initializes capacitor element.
+@dataclass
+class BaseCapacitor(SwitchedComponent):
+    """Initializes capacitor element.
 
-        Args:
-            farads: Farads
-            v_min: Minimum voltage allowed
-            v_max: Maximum voltage allowed
-            leak_floor: Minimum leakage
-            initial_voltage: Forced voltage at start of sim
-        """
 
-        self.farads = farads
-        self.v_min = v_min
-        self.v_max = v_max
-        self.leak_floor = leak_floor
-        self.initial_voltage = initial_voltage
+    Available fields for model is "C_real" and "C_ideal".
+    At time of writing the capacitor model incorperates the following as args:
+        "Resr", "Rleak", "Cval", "fo".
 
-        self.voltage = 0
+
+    Attributes:
+        farads: Farads
+        v_min: Minimum voltage allowed
+        v_max: Maximum voltage allowed
+        leakage: Leakage current in A
+        initial_voltage: Forced voltage at start of sim
+        voltage: Internal updated voltage that should not be touched
+        model: Spice model that is used
+    """
+
+    farads: float
+    v_min: float = 1.6
+    v_max: float = 3.3
+    _leakage: float = 3e-6
+    initial_voltage: float = 0.0
+    voltage: float = 0.0
+    model: str = ""
+    library: str = ""
 
     @property
     def energy(self) -> float:
@@ -116,8 +117,244 @@ class Capacitor(SwitchedComponent):
         return self.v_min**2 * self.farads / 2
 
     @property
+    def leakage(self) -> float:
+        return self._leakage
+
+    def library_realpath(self) -> str:
+        """Get the resolved path of the library."""
+
+        file_path = os.path.abspath(__file__)
+        spice_path = os.path.join(os.path.dirname(file_path), "spice")
+        lib_path = os.path.join(spice_path, self.library)
+
+        if not os.path.exists(lib_path):
+            raise FileNotFoundError(f"Library does not exist at {lib_path}")
+
+        return lib_path
+
+    def model_kwargs(self):
+        """Gets kwargs needed for spice model parameters"""
+
+        return {}
+
+
+@dataclass
+class Capacitor(BaseCapacitor):
+    """Simplified real capacitor with adjustable characteristics.
+
+    Attributes:
+        r_esr: Equivalent series resistance.
+        r_leak: Leakage resistance.
+        fo: Resonant frequency.
+    """
+
+    r_esr: float = 0.03
+    r_leak: float = 100e12
+    fo: float = 1e6
+
+    model: str = "C_real"
+    library: str = "cap.lib"
+
+    def model_kwargs(self):
+        return {
+            "Resr": self.r_esr,
+            "Rleak": self.r_leak,
+            "Cval": self.farads,
+            "fo": self.fo,
+        }
+
+
+@dataclass
+class IdealCapacitor(BaseCapacitor):
+    model: str = "C_ideal"
+    library: str = "cap.lib"
+
+    def model_kwargs(self):
+        return {
+            "C": self.farads,
+        }
+
+
+@dataclass
+class LeacsCapacitor(Capacitor):
+    """Leacs style capacitor model.
+
+    Assumes the leakage current is determined by `0.1 * C * V` with a minimum
+    at the `leak_floor`.
+    """
+
+    leak_floor: float = 3e-6
+
+    @property
     def leakage(self):
         return max(0.01 * self.farads * self.voltage, self.leak_floor)
+
+
+class PanasonicCapacitors:
+    """Collection of Panasonic capacitors.
+
+    Collected from: https://industrial.panasonic.com/ww/downloads/simulation-data
+
+    These were selected based on the following criteria:
+        - For a given arch (Polymer Aluminium, Aluminium electrolytic, etc) the
+          lowest ESR was chosen. This was done because ESR was given in the
+          table and the leakage current was not.
+        - The steps was determined by E6 values.
+        - The max voltage had to be above 3.3V.
+    """
+
+    class SPCAP:
+        """Conductive polymer aluminium capacitors."""
+
+        @dataclass
+        class C100uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/ABE0000/ABE0000C79.pdf
+            """
+
+            farads: float = 100e-6
+            v_max: float = 4.0
+            library: str = "EEFSX0G101ER.lib"
+            model: str = "EEFSX0G101ER"
+
+            @property
+            def leakage(self) -> float:
+                return 0.1 * self.farads * self.voltage
+
+        @dataclass
+        class C150uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/ABE0000/ABE0000C79.pdf
+            """
+
+            farads: float = 150e-6
+            v_max: float = 4.0
+            library: str = "EEFSX0G151E7.lib"
+            model: str = "EEFSX0G151E7"
+
+            @property
+            def leakage(self) -> float:
+                return 0.1 * self.farads * self.voltage
+
+        @dataclass
+        class C220uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/ABE0000/ABE0000C79.pdf
+            """
+
+            farads: float = 220e-6
+            v_max: float = 4.0
+            library: str = "EEFSX0G221ER.lib"
+            model: str = "EEFSX0G221ER"
+
+            @property
+            def leakage(self) -> float:
+                return 0.1 * self.farads * self.voltage
+
+        @dataclass
+        class C330uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/ABE0000/ABE0000C79.pdf
+            """
+
+            farads: float = 330e-6
+            v_max: float = 4.0
+            library: str = "EEFSX0G331XE.lib"
+            model: str = "EEFSX0G331XE"
+
+            @property
+            def leakage(self) -> float:
+                return 0.1 * self.farads * self.voltage
+
+        @dataclass
+        class C470uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/ABE0000/ABE0000C106.pdf
+            """
+
+            farads: float = 470e-6
+            v_max: float = 4.0
+            library: str = "ECGSY0G471R.lib"
+            model: str = "ECGSY0G471R"
+
+            @property
+            def leakage(self) -> float:
+                return 0.1 * self.farads * self.voltage
+
+    class POSCAP:
+        """Conductive Polymer Tantalum Solid Capacitors"""
+
+        @dataclass
+        class C100uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/AAA8000/AAA8000C74.pdf
+            """
+
+            farads: float = 100e-6
+            v_max: float = 6.3
+            _leakage: float = 63e-6
+            library: str = "6TCE100MI.lib"
+            model: str = "6TCE100MI"
+
+        @dataclass
+        class C150uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/AAA8000/AAA8000C74.pdf
+            """
+
+            farads: float = 150e-6
+            v_max: float = 6.3
+            _leakage: float = 94.5e-6
+            library: str = "6TCE150MF.lib"
+            model: str = "6TCE150MF"
+
+        @dataclass
+        class C220uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/AAA8000/AAA8000C74.pdf
+            """
+
+            farads: float = 220e-6
+            v_max: float = 6.3
+            _leakage: float = 138.6e-6
+            library: str = "6TCF220ML.lib"
+            model: str = "6TCF220ML"
+
+        @dataclass
+        class C330uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/AAA8000/AAA8000C74.pdf
+            """
+
+            farads: float = 330e-6
+            v_max: float = 6.3
+            _leakage: float = 207.9e-6
+            library: str = "6TCF330M9L.lib"
+            model: str = "6TCF330M9L"
+
+        @dataclass
+        class C470uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/AAA8000/AAA8000C74.pdf
+            """
+
+            farads: float = 470e-6
+            v_max: float = 4.0
+            _leakage: float = 188.0e-6
+            library: str = "4TCF470ML.lib"
+            model: str = "4TCF470ML"
+
+        @dataclass
+        class C680uF(BaseCapacitor):
+            """
+            https://industrial.panasonic.com/cdbs/www-data/pdf/AAA8000/AAA8000C74.pdf
+            """
+
+            farads: float = 680e-6
+            v_max: float = 4.0
+            _leakage: float = 272.0e-6
+            library: str = "4TCF470ML.lib"
+            model: str = "4TCF470ML"
 
 
 class Source(SwitchedComponent, ABC):
@@ -565,15 +802,8 @@ class CapacitorStorageSim:
         self.load_min_r = 1e-9
         self.load_max_r = 1e9
 
-    def _create_circuit(self, model: str = "C_real") -> Circuit:
+    def _create_circuit(self) -> Circuit:
         """Creates the circuit model.
-
-        Available fields for model is "C_real" and "C_ideal".
-        At time of writing the capacitor model incorperates:
-            "Resr", "Rleak", "Cval", "fo".
-
-        Args:
-            model: Capacitor model
 
         Returns:
             Circuit model object
@@ -581,8 +811,12 @@ class CapacitorStorageSim:
 
         circuit = Circuit("Capacitor Array")
 
-        # capacitor models
-        circuit.include(caplib_path)
+        # include necessary capacitor libraries
+        included_libraries = []
+        for cap in self.config.caps:
+            if cap.library_realpath() not in included_libraries:
+                circuit.include(cap.library_realpath())
+                included_libraries.append(cap.library_realpath())
 
         # switch model
         # threshold = 1 V
@@ -638,7 +872,7 @@ class CapacitorStorageSim:
                 )
 
             # capacitor
-            circuit.X(idx, model, f"c{idx}_pos", circuit.gnd, Cval=cap.farads)
+            circuit.X(idx, cap.model, f"c{idx}_pos", circuit.gnd, **cap.model_kwargs())
 
         # output power switches
         for n in range(self.config.p_lines):
@@ -920,6 +1154,7 @@ def create_basic_model(model: str = "C_real", **kwargs) -> Circuit:
 
     # Include capacitor subcircuit library
     # TODO update to a relative path
+    caplib_path = os.path.join(os.path.dir(os.path.abspath(__file__)), "spice")
     circuit.include(caplib_path)
 
     # Switch models
