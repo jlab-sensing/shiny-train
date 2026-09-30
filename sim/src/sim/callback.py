@@ -48,6 +48,7 @@ from .models import (
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
     ConstantSource,
+    SineSource,
     SMSink,
 )
 from .state_machines import Task, init_SinkSM
@@ -858,6 +859,35 @@ class TaskAssigner:
         self.K = len(caps)
         self.M = cap_limit
 
+    def presolve(self):
+        # make list of fully-charged cap energies for all caps in self.caps.
+        tmp = []
+        for cap in self.caps:
+            c = Capacitor(
+                cap.farads,
+                v_min=cap.v_min,
+                v_max=cap.v_max,
+            )
+            c.voltage = cap.v_max
+            tmp.append(c)
+
+        leakage = [c.leakage for c in self.caps]
+
+        energy_costs = [t.cost * t.duration for t in self.tasks]
+
+        model = build_model(
+            N=self.N,
+            K=self.K,
+            M=self.M,
+            caps=tmp,
+            energy_costs=energy_costs,
+            leakage=leakage,
+        )
+
+        return solve_assignment(model)
+
+        # run assign-like process on that list instead of self.caps
+
     def assign(
         self,
         time,
@@ -926,6 +956,9 @@ class LeacSimConfig(CapacitorStorageSimConfig):
             cap_limit,
         )
 
+        result = self.assigner.presolve()
+        self.assignment = result["solution"]
+
     def callback(self, time: float):
 
         if self.sm.time == 0.0:
@@ -963,10 +996,10 @@ class LeacSimConfig(CapacitorStorageSimConfig):
 
         # Solve a new assignment when scheduling
         # becomes possible.
-        if self.assigner.should_schedule(self):
-            result = self.assigner.assign(time)
-
-            self.assignment = result["solution"]
+        # if self.assigner.should_schedule(self):
+        #     result = self.assigner.assign(time)
+        #
+        #     self.assignment = result["solution"]
 
         self._update_sink()
 
@@ -1071,6 +1104,15 @@ if __name__ == "__main__":
         dt=1,
     )
 
+    # src = SineSource(
+    #     3.25,
+    #     1.70,
+    #     2.00,
+    #     0.00,
+    #     duration=1,
+    #     dt=0.01,
+    # )
+
     caps = [
         Capacitor(
             c,
@@ -1080,7 +1122,7 @@ if __name__ == "__main__":
         for c in cap_values
     ]
 
-    tasks = [
+    tasks = [  # bookkeeping for LeacSimConfig; SMSink is hardcoded with identical Tasks
         Task(
             cost=-11.68e-3 * CONST_VOLTAGE,
             duration=0.511,
