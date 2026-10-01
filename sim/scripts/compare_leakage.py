@@ -10,6 +10,7 @@ from sim.models import (
     ConstantSource,
     IdealCapacitor,
     LeacsCapacitor,
+    VeryLeakyCapacitor,
     PanasonicCapacitors,
     ConstantSink,
     CapacitorStorageSim
@@ -41,13 +42,16 @@ class TestCapacitor(CapacitorStorageSimConfig):
 
 
 if __name__ == "__main__":
-    src = ConstantSource(1, duration=10, dt=1)
+    src = ConstantSource(1, duration=3600, dt=1)
 
     # list of capacitors to evaluate, first one is baseline
     caps = [
+        VeryLeakyCapacitor(100e-6),
         IdealCapacitor(100e-6),
         LeacsCapacitor(100e-6),
         PanasonicCapacitors.SPCAP.C100uF(),
+        PanasonicCapacitors.SPCAP.C470uF(),
+        PanasonicCapacitors.POSCAP.C680uF(),
     ]
 
     sink = ConstantSink(0.1)

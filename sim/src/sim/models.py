@@ -192,6 +192,19 @@ class LeacsCapacitor(Capacitor):
         return max(0.01 * self.farads * self.voltage, self.leak_floor)
 
 
+@dataclass
+class VeryLeakyCapacitor(Capacitor):
+    """Super leaky capacitor for testing.
+
+    """
+
+    r_esr: float = 0.03
+    r_leak: float = 10e6
+    fo: float = 1e6
+
+    leak_floor: float = 3e-6
+
+
 class PanasonicCapacitors:
     """Collection of Panasonic capacitors.
 
