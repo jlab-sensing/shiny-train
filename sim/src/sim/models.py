@@ -11,8 +11,10 @@ from dataclasses import dataclass
 
 import h5py
 import matplotlib.pyplot as plt
+import numpy as np
 import PySpice
 from cffi import FFI
+from numpy.typing import ArrayLike
 from PySpice.Spice.Netlist import Circuit
 from PySpice.Spice.NgSpice.Shared import NgSpiceShared
 from PySpice.Unit import u_kOhm, u_ms, u_Ohm, u_s
@@ -1134,6 +1136,48 @@ class CapacitorStorageSim:
             ax.grid()
             ax.legend()
 
+    def _plot_energy(self):
+        _, axs = plt.subplots(3, 1, sharex=True)
+
+        axs[0].set_title("Energy over time")
+
+        # calculate power from simulation rather take in input for granted
+        src_energy = self.cum_energy("src", "v_r_source")
+        sink_energy = self.cum_energy("sink", "v_r_sink")
+        diff = src_energy - sink_energy
+
+        axs[0].plot(src_energy, label="src")
+        axs[1].plot(sink_energy, label="sink")
+        axs[2].plot(diff, label="diff")
+
+        for ax in axs:
+            ax.grid()
+            ax.legend()
+
+        axs[1].set_ylabel("Energy (J)")
+        axs[-1].set_xlabel("Time")
+
+    def cum_energy(self, v_label: str, r_label) -> ArrayLike:
+        """Calculates cumulative energy given voltage and resistance.
+
+        Args:
+            v_label: Voltage label.
+            r_label: Resistance label.
+
+        Returns:
+            Cumulative energy.
+        """
+
+        dt = np.diff(self.analysis.time)
+
+        volts = self.analysis[v_label]
+        res = self.analysis[r_label]
+        power = volts**2 / res
+
+        cum_energy = np.concat(([0.0], np.cumsum(0.5 * (power[1:] + power[:-1]) * dt)))
+
+        return cum_energy
+
     def plot(self):
         self._plot_capacitors()
         self._plot_cap_switches()
@@ -1142,6 +1186,7 @@ class CapacitorStorageSim:
         self._plot_power_lines()
         self._plot_src_sink_power()
         self._plot_src_sink_r()
+        self._plot_energy()
 
         plt.show(block=False)
         input("Press enter to close figures...")
