@@ -17,7 +17,7 @@ from cffi import FFI
 from numpy.typing import ArrayLike
 from PySpice.Spice.Netlist import Circuit
 from PySpice.Spice.NgSpice.Shared import NgSpiceShared
-from PySpice.Unit import u_kOhm, u_ms, u_Ohm, u_s
+from PySpice.Unit import u_kOhm, u_ms, u_Ohm, u_s, u_V
 
 
 class SwitchedComponent:
@@ -909,8 +909,11 @@ class CapacitorStorageSim:
                     model="S",
                 )
 
+            # Ammeter
+            circuit.V(f"_sense_{idx}", f"c{idx}_pos", f"c{idx}_cap", 0@u_V)
+
             # capacitor
-            circuit.X(idx, cap.model, f"c{idx}_pos", circuit.gnd, **cap.model_kwargs())
+            circuit.X(idx, cap.model, f"c{idx}_cap", circuit.gnd, **cap.model_kwargs())
 
         # output power switches
         for n in range(self.config.p_lines):
@@ -985,7 +988,7 @@ class CapacitorStorageSim:
         return circuit
 
     def _simulate(self, circuit: Circuit, end_time: float = 2.0):
-        simulator = circuit.simulator(
+        self.simulator = circuit.simulator(
             temperature=25,
             nominal_temperature=25,
             simulator="ngspice-shared",
@@ -996,9 +999,12 @@ class CapacitorStorageSim:
         ic_kwargs = {}
         for idx, cap in enumerate(self.config.caps):
             ic_kwargs[f"c{idx}_pos"] = cap.initial_voltage
-        simulator.initial_condition(**ic_kwargs)
+        self.simulator.initial_condition(**ic_kwargs)
 
-        analysis = simulator.transient(
+        # save currents
+        self.simulator.options(savecurrents=True)
+
+        analysis = self.simulator.transient(
             step_time=self.config.src.dt @ u_s,
             end_time=self.config.src.duration @ u_s,
             use_initial_condition=True,
@@ -1215,6 +1221,23 @@ class CapacitorStorageSim:
 
         axs[-1].set_xlabel("Time")
 
+    def _plot_cap_current(self):
+        _, axs = plt.subplots(len(self.config.caps), 1, sharex=True)
+
+        # Titles
+        axs[0].set_title("Capacitor Currents")
+
+        for idx, cap in enumerate(self.config.caps):
+            # Voltage plot (column 0)
+            axs[idx].plot(self.analysis[f"v_sense_{idx}"], label=f"{cap.farads}")
+            axs[idx].set_ylabel("Current (A)")
+
+        axs[-1].set_xlabel("Time (ms)")
+
+        for ax in axs:
+            ax.grid()
+            ax.legend()
+
     def plot(self):
         self._plot_capacitors()
         self._plot_cap_switches()
@@ -1225,6 +1248,7 @@ class CapacitorStorageSim:
         self._plot_src_sink_r()
         self._plot_energy()
         self._plot_cap_energy()
+        self._plot_cap_current()
 
         plt.show(block=False)
         input("Press enter to close figures...")
