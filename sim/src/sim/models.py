@@ -1178,6 +1178,30 @@ class CapacitorStorageSim:
 
         return cum_energy
 
+    def _plot_cap_energy(self):
+        # Number of capacitors + total energy
+        num_plots = len(self.config.caps) + 1
+        _, axs = plt.subplots(num_plots, 1, sharex=True)
+
+        total_energy_list = []
+
+        for idx, cap in enumerate(self.config.caps):
+            # calculate energy from 1/2 C V^2
+            energy = 0.5 * cap.farads * (self.analysis[f"c{idx}_pos"] ** 2)
+            total_energy_list.append(energy)
+
+            axs[idx].plot(energy, label=f"{cap.farads}")
+
+        total_energy = np.sum(total_energy_list, axis=0)
+        axs[-1].plot(total_energy, label="Total")
+
+        for ax in axs:
+            ax.grid()
+            ax.legend()
+            ax.set_ylabel("Energy (J)")
+
+        axs[-1].set_xlabel("Time")
+
     def plot(self):
         self._plot_capacitors()
         self._plot_cap_switches()
@@ -1187,6 +1211,7 @@ class CapacitorStorageSim:
         self._plot_src_sink_power()
         self._plot_src_sink_r()
         self._plot_energy()
+        self._plot_cap_energy()
 
         plt.show(block=False)
         input("Press enter to close figures...")
