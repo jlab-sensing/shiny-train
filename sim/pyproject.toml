@@ -19,6 +19,7 @@ dependencies = [
     "ortools",
     "scipy",
     "h5py",
+    "pyscipopt",
 ]
 
 [project.optional-dependencies]
