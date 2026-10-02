@@ -203,6 +203,40 @@ class VeryLeakyCapacitor(Capacitor):
     leak_floor: float = 3e-6
 
 
+@dataclass
+class CVCapacitor(BaseCapacitor):
+    """Capacitor with leakage current dependent on CV.
+
+    Attributes:
+        k: Scaling factor.
+        Imin: Minimum leakage current.
+        Rmin: Minimum leakage resistance.
+        Rmax: Maximum leakage resistance.
+    """
+
+    # spice parameters
+    k: float = 0.01
+    i_min: float = 1e-6
+    r_min: float = 1
+    r_max: float = 1e9
+
+    model: str = "C_cv"
+    library: str = "cap.lib"
+
+    def model_kwargs(self):
+        return {
+            "Cval": self.farads,
+            "k": self.k,
+            "Imin": self.i_min,
+            "Rmin": self.r_min,
+            "Rmax": self.r_max,
+        }
+
+    @property
+    def leakage(self):
+        return max(0.01 * self.farads * self.voltage, self.leak_floor)
+
+
 class PanasonicCapacitors:
     """Collection of Panasonic capacitors.
 
@@ -736,7 +770,11 @@ class CapacitorStorageSim:
             # TODO Update to configured power source
             # this is constant, see logic in _crease_circuit
             if node == "v_src":
-                voltage[0] = self.config.src.get_voltage()
+                connected = self.config.src.connected()
+                if connected:
+                    voltage[0] = self.config.src.get_voltage()
+                else:
+                    voltage[0] = 0.0
 
             # control the source power
             # voltage is power here
@@ -746,7 +784,8 @@ class CapacitorStorageSim:
                     power = self.config.src.get_power(time)
                     voltage[0] = power
                 else:
-                    voltage[0] = 1e-9
+                    # voltage[0] = 1e-9
+                    voltage[0] = 100
 
             # contrtol the sink power
             # voltage is power, see logic in _Create_circuit
@@ -858,14 +897,14 @@ class CapacitorStorageSim:
         # input source
         # TODO Chance to the param for constant voltage source
         circuit.V("_src", "v_src_pos", circuit.gnd, "dc 0 external")
-        circuit.C("_src", "src", circuit.gnd, 1e-9)
+        circuit.C("_src", "src", circuit.gnd, 100e-6)
 
         circuit.V("_pwr_source", "v_pwr_source", circuit.gnd, "dc 0 external")
         circuit.BehavioralSource(
             "_r_source",
             "v_r_source",
             circuit.gnd,
-            voltage_expression="{V(v_src_pos)**2/V(v_pwr_source)}",
+            voltage_expression="{min(max(V(v_src_pos)**2/V(v_pwr_source), 1e-3), 1e9)}",
         )
 
         circuit.raw_spice += "R1 v_src_pos src R='{V(v_r_source)}'\n"
@@ -981,7 +1020,7 @@ class CapacitorStorageSim:
         circuit.raw_spice += "R2 sink gnd {v(v_r_sink)}\n"
 
         # small buffer cap
-        circuit.C("_sink", "sink", circuit.gnd, 1e-9)
+        circuit.C("_sink", "sink", circuit.gnd, 100e-6)
 
         return circuit
 
@@ -999,8 +1038,13 @@ class CapacitorStorageSim:
             ic_kwargs[f"c{idx}_pos"] = cap.initial_voltage
         self.simulator.initial_condition(**ic_kwargs)
 
-        # save currents
-        self.simulator.options(savecurrents=True)
+        # set options
+        # default gear order is 2
+        self.simulator.options(
+            savecurrents=True,
+            method="gear",
+            maxord=2,
+        )
 
         analysis = self.simulator.transient(
             step_time=self.config.src.dt @ u_s,

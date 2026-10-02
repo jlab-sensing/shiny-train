@@ -21,3 +21,24 @@ R2    3     4     {Rleak}
 C1 1 2 {C}
 
 .ends
+
+.subckt C_cv p n Cval=1e-6 k=0.01 Imin=3u Rmin=1 Rmax=1M
+* Ideal capacitor with voltage-proportional leakage and a minimum floor.
+*
+* Has minimum and maximum values for leakage resistance.
+*
+*   I_leak = max(k*Cval*|V|, Imin)  (units: A, with Cval in F and V in V)
+*   k    : scalar on the leakage current (0.01 is the usual 0.01CV rule)
+*   Imin : minimum leakage current in amps
+*
+*
+C1    p n {Cval}
+Rleak p n R='min(max(max(k * Cval * abs(v(p,n)), abs(v(p,n)) / Imin), Rmin), Rmax)'
+
+* Debug statements
+*Brprobe rprobe 0 V='min(max(max(k * Cval * abs(v(p,n)), abs(v(p,n)) / Imin), Rmin), Rmax)'
+*Bvprobe vprobe 0 V='v(p,n)'
+*Bcvprobe cvprobe 0 V='k * Cval * abs(v(p,n))'
+*Biprobe iprobe 0 V='abs(v(p,n)) / Imin'
+
+.ends C_cv

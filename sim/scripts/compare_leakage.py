@@ -1,24 +1,17 @@
 #!/usr/bin/env python3
 
-"""Compare the total leakage energy of various models of capacitors
-
-
-"""
+"""Compare the total leakage energy of various models of capacitors"""
 
 from sim.models import (
+    CapacitorStorageSim,
     CapacitorStorageSimConfig,
-    ConstantSource,
-    IdealCapacitor,
-    LeacsCapacitor,
-    VeryLeakyCapacitor,
-    PanasonicCapacitors,
     ConstantSink,
-    CapacitorStorageSim
+    ConstantSource,
+    CVCapacitor,
 )
 
 
 class TestCapacitor(CapacitorStorageSimConfig):
-
     # flag for sufficient capacitor charge
     charged = False
 
@@ -44,15 +37,18 @@ class TestCapacitor(CapacitorStorageSimConfig):
 if __name__ == "__main__":
     src = ConstantSource(1, duration=3600, dt=1)
 
-    # list of capacitors to evaluate, first one is baseline
-    caps = [
-        VeryLeakyCapacitor(100e-6),
-        IdealCapacitor(100e-6),
-        LeacsCapacitor(100e-6),
-        PanasonicCapacitors.SPCAP.C100uF(),
-        PanasonicCapacitors.SPCAP.C470uF(),
-        PanasonicCapacitors.POSCAP.C680uF(),
+    values = [
+        100e-6,
+        150e-6,
+        220e-6,
+        330e-6,
+        470e-6,
+        680e-6,
+        1e-3,
     ]
+
+    # list of capacitors to evaluate, first one is baseline
+    caps = [CVCapacitor(f) for f in values]
 
     sink = ConstantSink(0.1)
 
@@ -61,5 +57,8 @@ if __name__ == "__main__":
     sim = CapacitorStorageSim(config)
 
     sim.run()
+
     print(sim.circuit)
     sim.plot()
+    # sim.plot_time(0., 10.)
+    # sim.plot_time(20.0)
