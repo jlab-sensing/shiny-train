@@ -6,8 +6,8 @@ from sim.models import (
     Capacitor,
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
+    ConstantSink,
     ConstantSource,
-    Sink,
 )
 
 
@@ -40,9 +40,9 @@ class MyConfig(CapacitorStorageSimConfig):
 
 cap_values = [10e-6, 100e-6]
 
-src = ConstantSource(1, 0.1, duration=2, dt=1)
+src = ConstantSource(0.1, voltage=2.0, duration=2, dt=1)
 caps = [Capacitor(c) for c in cap_values]
-sink = Sink()
+sink = ConstantSink(0.1)
 
 config = MyConfig(src, caps, sink, len(caps))
 

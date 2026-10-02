@@ -48,8 +48,6 @@ from .models import (
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
     ConstantSource,
-    SineSource,
-    BonitoSource,
     SMSink,
 )
 from .state_machines import Task, init_SinkSM
