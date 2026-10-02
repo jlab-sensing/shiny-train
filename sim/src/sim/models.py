@@ -545,8 +545,23 @@ class BonitoSource(Source):
 
 
 class Sink(SwitchedComponent):
-    def __init__(self):
-        pass
+    def __init__(self, v_min: float = 1.65):
+        """Initializes a sink
+
+        Any classes that inherit from this should use `Sink.__init(self,
+        **kwargs)` at the bottom of their `__init__` function.
+
+        The param `sink_min_v` sets the minimum voltage that the sink starts
+        the draw power. Otherwise the sink goes into a high impedance state.
+        This is meant to simulate microcontrollers that have a minimum voltage
+        required to operate. It could also be a minimum voltage for a boost
+        converter to function.
+
+        Args:
+            v_min: Minimum voltage required for sink.
+        """
+
+        self.v_min = v_min
 
     def get_power(self) -> float:
         """Gets the current power draw of the sink.
@@ -559,7 +574,7 @@ class Sink(SwitchedComponent):
 
 
 class ConstantSink(Sink):
-    def __init__(self, power: float):
+    def __init__(self, power: float, **kwargs):
         """Sets constant power draw on sink
 
         Args:
@@ -567,6 +582,8 @@ class ConstantSink(Sink):
         """
 
         self.power = power
+
+        Sink.__init__(self, **kwargs)
 
     def get_power(self) -> float:
         """Gets power drain
@@ -590,7 +607,10 @@ class SMSink(Sink):
         the passive state recharges until the wake threshold is reached,
         then wakes
         """
+
         self.sm = sink
+
+        Sink.__init__(self, **kwargs)
 
     def run_sm(self):
         self.sm.send("cycle")
@@ -625,6 +645,8 @@ class CapacitorStorageSimConfig:
         """
         Power lines connect the power source to the sink. This allows for
         multiple capacitors to charge while one is discharging.
+
+
 
         Args:
             cb: Callback function
@@ -699,10 +721,12 @@ class CapacitorStorageSim:
             )
 
             # TODO Update to configured power source
-            # this is constant
+            # this is constant, see logic in _crease_circuit
             if node == "v_src":
                 voltage[0] = self.config.src.get_voltage()
 
+            # control the source power
+            # voltage is power here
             if node == "v_pwr_source":
                 connected = self.config.src.connected()
                 if connected:
@@ -711,16 +735,14 @@ class CapacitorStorageSim:
                 else:
                     voltage[0] = 1e-9
 
+            # contrtol the sink power
+            # voltage is power, see logic in _Create_circuit
             if node == "v_pwr_sink":
-                # TODO (jtmadden): Update to actual voltage
+                # prevent div / 0 by setting power to small number
                 if self.config.sink.get_power():
-                    voltage[0] = (3.3**2) / self.config.sink.get_power()
+                    voltage[0] = self.config.sink.get_power()
                 else:
-                    voltage[0] = (3.3**2) / 1e-9
-                # if self.config.sink.connected():
-                #    voltage[0] = self.config.sink.get_power()
-                # else:
-                #    voltage[0] = 1e-9
+                    voltage[0] = 1e-9
 
             # configure switches
             for n in range(self.config.p_lines):
@@ -823,9 +845,17 @@ class CapacitorStorageSim:
         # input source
         # TODO Chance to the param for constant voltage source
         circuit.V("_src", "v_src_pos", circuit.gnd, "dc 0 external")
+        circuit.C("_src", "src", circuit.gnd, 1e-9)
 
         circuit.V("_pwr_source", "v_pwr_source", circuit.gnd, "dc 0 external")
-        circuit.raw_spice += "R1 v_src_pos src {V(v_src_pos)**2/V(v_pwr_source)}\n"
+        circuit.BehavioralSource(
+            "_r_source",
+            "v_r_source",
+            circuit.gnd,
+            voltage_expression="{V(v_src_pos)**2/V(v_pwr_source)}",
+        )
+
+        circuit.raw_spice += "R1 v_src_pos src R='{V(v_r_source)}'\n"
 
         # input power switches
         for n in range(self.config.p_lines):
@@ -890,7 +920,52 @@ class CapacitorStorageSim:
 
         # new voltage controlled resistive load (R = V^2 / P)
         circuit.V("_pwr_sink", "v_pwr_sink", circuit.gnd, "dc 0 external")
-        circuit.raw_spice += "R2 sink gnd {v(v_pwr_sink)}\n"
+
+        #
+        # Direct change
+        #
+
+        # circuit.BehavioralSource(
+        #    "_r_sink",
+        #    "v_r_sink",
+        #    circuit.gnd,
+        #    voltage_expression=f"{{v(sink) > {self.config.sink.v_min} ? v(sink)**2 / v(v_pwr_sink) : 1e9}}",
+        # )
+
+        #
+        # Smooth transition
+        #
+
+        v_min = self.config.sink.v_min
+        # volts over which the load fades in
+        width = 0.001
+        # 1 / 1e9 ohm
+        r_max = 1e9
+        g_off = 1 / r_max
+
+        # G_on = P / V^2, guarded against P = 0 and V near 0
+        g_on = f"max(v(v_pwr_sink), 1e-3) / max(v(sink), {v_min})**2"
+        ramp = f"u2((v(sink) - {v_min}) / {width})"
+
+        circuit.BehavioralSource(
+            "_r_sink",
+            "v_r_sink",
+            circuit.gnd,
+            voltage_expression=f"min(1 / ({g_off} + {g_on} * {ramp}), {r_max})",
+        )
+
+        # Old voltage expression for reference. The instantaneous transition
+        # was too much for the simulation to handle.
+        # voltage_expression=f"{{v(sink) > {self.config.sink.v_min} ? v(sink)**2 / v(v_pwr_sink) : 1e9}}",
+
+        # if voltage at sink > 1.65
+        #   R = V^2 / P
+        # else
+        #   R = 1e9 (OC equivalent)
+        circuit.raw_spice += "R2 sink gnd {v(v_r_sink)}\n"
+
+        # small buffer cap
+        circuit.C("_sink", "sink", circuit.gnd, 1e-9)
 
         return circuit
 
@@ -1047,23 +1122,8 @@ class CapacitorStorageSim:
 
         axs[0].set_title("Source/Sink Resistance")
 
-        v_src_pos = self.analysis["v_src_pos"]
-        v_pwr_source = self.analysis["v_pwr_source"]
-
-        R_src = v_src_pos**2 / v_pwr_source
-
-        v_pwr_sink = self.analysis["v_pwr_sink"]
-
-        v_sink = self.analysis["sink"]
-
-        R_sink = v_pwr_sink**2 / v_sink
-
-        axs[0].plot(R_src, label="R_src")
-        axs[0].plot(v_src_pos, label="Source voltage")
-        axs[0].plot(v_pwr_source, label="Control voltage (W)")
-        axs[1].plot(R_sink, label="R_sink")
-        axs[1].plot(v_sink, label="Sink Voltage")
-        axs[1].plot(v_pwr_sink, label="Control voltage (W)")
+        axs[0].plot(self.analysis["v_r_source"], label="source")
+        axs[1].plot(self.analysis["v_r_sink"], label="sink")
 
         for ax in axs:
             ax.set_ylabel("Resistance (R)")
