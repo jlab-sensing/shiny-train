@@ -31,6 +31,19 @@ class Task:
     duration: float
 
 
+class StateTreeNode:
+    def __init__(self, value):
+        """ V
+        value is a Task object
+        children is a (potentially empty) list of child StateTreeNodes
+        """
+        self.value = value
+        self.children = []
+
+    def add_child(self, child_node):
+        self.children.append(child_node)
+
+
 class SinkSM(StateChart):
     cap = None
     time = None
@@ -122,15 +135,9 @@ class SinkSM(StateChart):
             projected_energy = energy + task.cost * self.remaining_time
 
             if projected_energy <= min_energy:
-                print(
-                    f"{self.time:.6f}: going to sleep ({energy}, {projected_energy}, {min_energy})"
-                )
                 self.raise_("pause")
             else:
-                # self.load_value = task.cost
-                print(
-                    f"{self.time:.6f}:     working ({energy}, {projected_energy}, {min_energy})"
-                )
+                pass
         else:
             print(f"unexpected source.id: {source.id}")
 

@@ -44,7 +44,7 @@ from pyscipopt import Model, quicksum
 from pyscipopt.recipes.nonlinear import set_nonlinear_objective
 
 from .models import (
-    Capacitor,
+    LeacsCapacitor,
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
     ConstantSource,
@@ -212,11 +212,13 @@ def build_model(
         energy_costs,
         dtype=float,
     )
+    print('ec: ', energy_costs)
 
     leakage = np.asarray(
         leakage,
         dtype=float,
     )
+    print("leakage: ", leakage)
 
     if energy_costs.shape != (N,):
         raise ValueError("energy_costs must have shape (N,)")
@@ -232,7 +234,7 @@ def build_model(
 
     for i, cap in enumerate(caps):
         E_allowed[i] = cap.farads * (cap.voltage**2 - cap.v_min**2) / 2
-
+    print("E_allowed: ", E_allowed)
     # ------------------------------------------------------------
     # Assignment energy:
     #
@@ -240,8 +242,10 @@ def build_model(
     # ------------------------------------------------------------
 
     assignment_energy = energy_costs[:, np.newaxis] + leakage[np.newaxis, :]
+    print('assignment_energy: ', assignment_energy)
 
     feasibility = assignment_energy <= E_allowed[np.newaxis, :]
+    print('feas: ', feasibility)
 
     if feasibility.shape != (N, K):
         raise ValueError("feasibility must have shape (N, K)")
@@ -804,10 +808,10 @@ def solve_assignment(
 
     optimal_tasks = round(stage1["objective"])
 
-    # print(
-    #     f"Stage 1 optimal assignments: "
-    #     f"{optimal_tasks}"
-    # )
+    print(
+        f"Stage 1 optimal assignments: "
+        f"{optimal_tasks}"
+    )
 
     # ------------------------------------------------------------
     # Stage 2
@@ -838,11 +842,11 @@ def solve_assignment(
 
     stage2["wall_time_ms"] = stage1["wall_time_ms"] + stage2["wall_time_ms"]
 
-    # print(
-    #     "Stage 2 selected."
-    #     f" loads={stage2['capacitor_loads']},"
-    #     f" load_objective={stage2['load_objective']}"
-    # )
+    print(
+        "Stage 2 selected."
+        f" loads={stage2['capacitor_loads']},"
+        f" load_objective={stage2['load_objective']}"
+    )
 
     return stage2
 
@@ -864,7 +868,7 @@ class TaskAssigner:
         # make list of fully-charged cap energies for all caps in self.caps.
         tmp = []
         for cap in self.caps:
-            c = Capacitor(
+            c = LeacsCapacitor(
                 cap.farads,
                 v_min=cap.v_min,
                 v_max=cap.v_max,
@@ -872,8 +876,7 @@ class TaskAssigner:
             c.voltage = cap.v_max
             tmp.append(c)
 
-        leakage = [c.leakage for c in self.caps]
-
+        leakage = [c.leakage for c in tmp]
         energy_costs = [t.cost * t.duration for t in self.tasks]
 
         model = build_model(
@@ -884,10 +887,7 @@ class TaskAssigner:
             energy_costs=energy_costs,
             leakage=leakage,
         )
-
         return solve_assignment(model)
-
-        # run assign-like process on that list instead of self.caps
 
     def assign(
         self,
@@ -1088,19 +1088,19 @@ class LeacSimConfig(CapacitorStorageSimConfig):
 
 
 if __name__ == "__main__":
-    M = 3
+    M = 2
 
     CONST_VOLTAGE = 3.3
 
     cap_values = [
-        4e-3,
-        1e-6,
-        # 4e-4,
+        6e-3,
+        6e-4,
+        6e-3,
     ]
 
     src = ConstantSource(
-        0.05,
-        duration=10,
+        1,
+        duration=2,
         dt=0.01,
     )
 
@@ -1120,9 +1120,9 @@ if __name__ == "__main__":
     # )
 
     caps = [
-        Capacitor(
+        LeacsCapacitor(
             c,
-            v_min=0.5,
+            v_min=0.1,
             v_max=3.2,
         )
         for c in cap_values
@@ -1130,15 +1130,15 @@ if __name__ == "__main__":
 
     tasks = [  # bookkeeping for LeacSimConfig; SMSink is hardcoded with identical Tasks
         Task(
-            cost=11.68e-3 * CONST_VOLTAGE,
+            cost=11.68e-4 * CONST_VOLTAGE,
             duration=0.511,
         ),
         Task(
-            cost=86.52e-3 * CONST_VOLTAGE,
+            cost=86.52e-4 * CONST_VOLTAGE,
             duration=0.285,
         ),
         Task(
-            cost=20.03e-3 * CONST_VOLTAGE,
+            cost=20.03e-4 * CONST_VOLTAGE,
             duration=0.937,
         ),
     ]
