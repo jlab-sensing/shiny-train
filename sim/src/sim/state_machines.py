@@ -31,6 +31,49 @@ class Task:
     duration: float
 
 
+class StateTreeNode:
+    def __init__(self, value):
+        """ V
+        value is a Task object
+        children is a (potentially empty) list of child StateTreeNodes
+        """
+        self.value = value
+        self.children = []
+
+    def add_child(self, child_node):
+        self.children.append(child_node)
+
+
+def build_stochastic_tree(P, root, depth):
+    """
+    Builds a tree of states up to a specific depth from a stochastic matrix P.
+    P: 2D numpy array where P[i, j] is the transition probability from state i to j.
+    current_state: Index of the current state (root or node).
+    depth: Depth of the tree to build.
+    """
+    node = {
+        'state': current_state,
+        'children': []
+    }
+
+    # Base case: stop when depth reaches 0
+    if depth == 0:
+        return node
+
+    n_states = P.shape[1]
+    transition_probs = P[current_state]
+
+    # Recursively add valid child states
+    for next_state in range(n_states):
+        prob = transition_probs[next_state]
+        if prob > 0:  # Only branch if transition probability is non-zero
+            child_node = build_stochastic_tree(P, next_state, depth - 1)
+            child_node['transition_probability'] = prob
+            node['children'].append(child_node)
+
+    return node
+
+
 class SinkSM(StateChart):
     cap = None
     time = None
@@ -122,15 +165,9 @@ class SinkSM(StateChart):
             projected_energy = energy + task.cost * self.remaining_time
 
             if projected_energy <= min_energy:
-                print(
-                    f"{self.time:.6f}: going to sleep ({energy}, {projected_energy}, {min_energy})"
-                )
                 self.raise_("pause")
             else:
-                # self.load_value = task.cost
-                print(
-                    f"{self.time:.6f}:     working ({energy}, {projected_energy}, {min_energy})"
-                )
+                pass
         else:
             print(f"unexpected source.id: {source.id}")
 
