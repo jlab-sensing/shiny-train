@@ -11,11 +11,13 @@ from dataclasses import dataclass
 
 import h5py
 import matplotlib.pyplot as plt
+import numpy as np
 import PySpice
 from cffi import FFI
+from numpy.typing import ArrayLike
 from PySpice.Spice.Netlist import Circuit
 from PySpice.Spice.NgSpice.Shared import NgSpiceShared
-from PySpice.Unit import u_kOhm, u_ms, u_Ohm, u_s
+from PySpice.Unit import u_kOhm, u_ms, u_Ohm, u_s, u_V
 
 
 class SwitchedComponent:
@@ -184,6 +186,51 @@ class LeacsCapacitor(Capacitor):
     """
 
     leak_floor: float = 3e-6
+
+    @property
+    def leakage(self):
+        return max(0.01 * self.farads * self.voltage, self.leak_floor)
+
+
+@dataclass
+class VeryLeakyCapacitor(Capacitor):
+    """Super leaky capacitor for testing."""
+
+    r_esr: float = 0.03
+    r_leak: float = 10e6
+    fo: float = 1e6
+
+    leak_floor: float = 3e-6
+
+
+@dataclass
+class CVCapacitor(BaseCapacitor):
+    """Capacitor with leakage current dependent on CV.
+
+    Attributes:
+        k: Scaling factor.
+        Imin: Minimum leakage current.
+        Rmin: Minimum leakage resistance.
+        Rmax: Maximum leakage resistance.
+    """
+
+    # spice parameters
+    k: float = 0.01
+    i_min: float = 1e-6
+    r_min: float = 1
+    r_max: float = 1e9
+
+    model: str = "C_cv"
+    library: str = "cap.lib"
+
+    def model_kwargs(self):
+        return {
+            "Cval": self.farads,
+            "k": self.k,
+            "Imin": self.i_min,
+            "Rmin": self.r_min,
+            "Rmax": self.r_max,
+        }
 
     @property
     def leakage(self):
@@ -723,7 +770,11 @@ class CapacitorStorageSim:
             # TODO Update to configured power source
             # this is constant, see logic in _crease_circuit
             if node == "v_src":
-                voltage[0] = self.config.src.get_voltage()
+                connected = self.config.src.connected()
+                if connected:
+                    voltage[0] = self.config.src.get_voltage()
+                else:
+                    voltage[0] = 0.0
 
             # control the source power
             # voltage is power here
@@ -733,7 +784,8 @@ class CapacitorStorageSim:
                     power = self.config.src.get_power(time)
                     voltage[0] = power
                 else:
-                    voltage[0] = 1e-9
+                    # voltage[0] = 1e-9
+                    voltage[0] = 100
 
             # contrtol the sink power
             # voltage is power, see logic in _Create_circuit
@@ -845,14 +897,14 @@ class CapacitorStorageSim:
         # input source
         # TODO Chance to the param for constant voltage source
         circuit.V("_src", "v_src_pos", circuit.gnd, "dc 0 external")
-        circuit.C("_src", "src", circuit.gnd, 1e-9)
+        circuit.C("_src", "src", circuit.gnd, 100e-6)
 
         circuit.V("_pwr_source", "v_pwr_source", circuit.gnd, "dc 0 external")
         circuit.BehavioralSource(
             "_r_source",
             "v_r_source",
             circuit.gnd,
-            voltage_expression="{V(v_src_pos)**2/V(v_pwr_source)}",
+            voltage_expression="{min(max(V(v_src_pos)**2/V(v_pwr_source), 1e-3), 1e9)}",
         )
 
         circuit.raw_spice += "R1 v_src_pos src R='{V(v_r_source)}'\n"
@@ -894,8 +946,11 @@ class CapacitorStorageSim:
                     model="S",
                 )
 
+            # Ammeter
+            circuit.V(f"_sense_{idx}", f"c{idx}_pos", f"c{idx}_cap", 0 @ u_V)
+
             # capacitor
-            circuit.X(idx, cap.model, f"c{idx}_pos", circuit.gnd, **cap.model_kwargs())
+            circuit.X(idx, cap.model, f"c{idx}_cap", circuit.gnd, **cap.model_kwargs())
 
         # output power switches
         for n in range(self.config.p_lines):
@@ -965,12 +1020,12 @@ class CapacitorStorageSim:
         circuit.raw_spice += "R2 sink gnd {v(v_r_sink)}\n"
 
         # small buffer cap
-        circuit.C("_sink", "sink", circuit.gnd, 1e-9)
+        circuit.C("_sink", "sink", circuit.gnd, 100e-6)
 
         return circuit
 
     def _simulate(self, circuit: Circuit, end_time: float = 2.0):
-        simulator = circuit.simulator(
+        self.simulator = circuit.simulator(
             temperature=25,
             nominal_temperature=25,
             simulator="ngspice-shared",
@@ -981,9 +1036,17 @@ class CapacitorStorageSim:
         ic_kwargs = {}
         for idx, cap in enumerate(self.config.caps):
             ic_kwargs[f"c{idx}_pos"] = cap.initial_voltage
-        simulator.initial_condition(**ic_kwargs)
+        self.simulator.initial_condition(**ic_kwargs)
 
-        analysis = simulator.transient(
+        # set options
+        # default gear order is 2
+        self.simulator.options(
+            savecurrents=True,
+            method="gear",
+            maxord=2,
+        )
+
+        analysis = self.simulator.transient(
             step_time=self.config.src.dt @ u_s,
             end_time=self.config.src.duration @ u_s,
             use_initial_condition=True,
@@ -1002,7 +1065,7 @@ class CapacitorStorageSim:
         self.circuit = self._create_circuit()
         self.analysis = self._simulate(self.circuit)
 
-    def _plot_capacitors(self):
+    def _plot_capacitors(self, sl: slice = slice(None)):
         _, axs = plt.subplots(len(self.config.caps), 1, sharex=True)
 
         # Titles
@@ -1010,16 +1073,20 @@ class CapacitorStorageSim:
 
         for idx, cap in enumerate(self.config.caps):
             # Voltage plot (column 0)
-            axs[idx].plot(self.analysis[f"c{idx}_pos"], label=f"{cap.farads}")
+            axs[idx].plot(
+                np.asarray(self.analysis.time[sl]),
+                self.analysis[f"c{idx}_pos"][sl],
+                label=f"{cap.farads}",
+            )
             axs[idx].set_ylabel("Voltage (V)")
 
-        axs[-1].set_xlabel("Time (ms)")
+        axs[-1].set_xlabel("Time (s)")
 
         for ax in axs:
             ax.grid()
             ax.legend()
 
-    def _plot_cap_switches(self):
+    def _plot_cap_switches(self, sl: slice = slice(None)):
         num_switches = self.config.p_lines * len(self.config.caps)
         _, axs = plt.subplots(num_switches, sharex=True)
 
@@ -1029,55 +1096,64 @@ class CapacitorStorageSim:
         for idx, cap in enumerate(self.config.caps):
             for line in range(self.config.p_lines):
                 axs[row].plot(
-                    self.analysis[f"ctrl_pwr{line}_c{idx}_pos"],
+                    np.asarray(self.analysis.time[sl]),
+                    self.analysis[f"ctrl_pwr{line}_c{idx}_pos"][sl],
                     label=f"C: {cap.farads} line: {line}",
                 )
                 axs[row].set_ylabel("Switch State")
                 row += 1
 
-        axs[-1].set_xlabel("Time (ms)")
+        axs[-1].set_xlabel("Time (s)")
 
         for ax in axs:
             ax.grid()
             ax.legend()
             ax.set_ylim(-0.1, 1.1)
 
-    def _plot_input_output(self):
+    def _plot_input_output(self, sl: slice = slice(None)):
         _, axs = plt.subplots(2, 1, sharex=True)
 
         axs[0].set_title("Source/Sink Voltages")
 
-        axs[0].plot(self.analysis["src"], label="src")
-        axs[1].plot(self.analysis["sink"], label="sink")
+        axs[0].plot(
+            np.asarray(self.analysis.time[sl]), self.analysis["src"][sl], label="src"
+        )
+        axs[1].plot(
+            np.asarray(self.analysis.time[sl]), self.analysis["sink"][sl], label="sink"
+        )
 
         for ax in axs:
             ax.set_ylabel("Voltage (V)")
 
-        axs[1].set_xlabel("Time (ms)")
+        axs[1].set_xlabel("Time (s)")
 
         for ax in axs:
             ax.grid()
             ax.legend()
 
-    def _plot_io_switches(self):
+    def _plot_io_switches(self, sl: slice = slice(None)):
         rows = 2 * self.config.p_lines
         _, axs = plt.subplots(rows, sharex=True)
 
         axs[0].set_title("Source/Sink Switches")
 
-        axs[-1].set_xlabel("Time (ms)")
+        axs[-1].set_xlabel("Time (s)")
 
         ax_idx = 0
 
         for n in range(self.config.p_lines):
             axs[ax_idx].plot(
-                self.analysis[f"ctrl_src_pwr{n}_pos"], label=f"source, line {n}"
+                np.asarray(self.analysis.time[sl]),
+                self.analysis[f"ctrl_src_pwr{n}_pos"][sl],
+                label=f"source, line {n}",
             )
             ax_idx += 1
 
         for n in range(self.config.p_lines):
             axs[ax_idx].plot(
-                self.analysis[f"ctrl_pwr{n}_sink_pos"], label=f"sink, line {n}"
+                np.asarray(self.analysis.time[sl]),
+                self.analysis[f"ctrl_pwr{n}_sink_pos"][sl],
+                label=f"sink, line {n}",
             )
             ax_idx += 1
 
@@ -1087,64 +1163,193 @@ class CapacitorStorageSim:
             ax.legend()
             ax.set_ylim(-0.1, 1.1)
 
-    def _plot_power_lines(self):
+    def _plot_power_lines(self, sl: slice = slice(None)):
         _, axs = plt.subplots(self.config.p_lines, sharex=True)
 
         axs[0].set_title("Power line voltages")
 
-        axs[-1].set_xlabel("Time (ms)")
+        axs[-1].set_xlabel("Time (s)")
 
         for ax, n in zip(axs, range(self.config.p_lines)):
-            ax.plot(self.analysis[f"pwr{n}"], label=f"line {n}")
+            ax.plot(
+                np.asarray(self.analysis.time[sl]),
+                self.analysis[f"pwr{n}"][sl],
+                label=f"line {n}",
+            )
             ax.set_ylabel("Voltage (V)")
             ax.grid()
             ax.legend()
 
-    def _plot_src_sink_power(self):
+    def _plot_src_sink_power(self, sl: slice = slice(None)):
         _, axs = plt.subplots(2, 1, sharex=True)
 
         axs[0].set_title("Source/Sink Power")
 
-        axs[0].plot(self.analysis["v_pwr_source"], label="src")
-        axs[1].plot(self.analysis["v_pwr_sink"], label="sink")
+        axs[0].plot(
+            np.asarray(self.analysis.time[sl]),
+            self.analysis["v_pwr_source"][sl],
+            label="src",
+        )
+        axs[1].plot(
+            np.asarray(self.analysis.time[sl]),
+            self.analysis["v_pwr_sink"][sl],
+            label="sink",
+        )
 
         for ax in axs:
             ax.set_ylabel("Power (W)")
 
-        axs[1].set_xlabel("Time (ms)")
+        axs[1].set_xlabel("Time (s)")
 
         for ax in axs:
             ax.grid()
             ax.legend()
 
-    def _plot_src_sink_r(self):
+    def _plot_src_sink_r(self, sl: slice = slice(None)):
         _, axs = plt.subplots(2, 1, sharex=True)
 
         axs[0].set_title("Source/Sink Resistance")
 
-        axs[0].plot(self.analysis["v_r_source"], label="source")
-        axs[1].plot(self.analysis["v_r_sink"], label="sink")
+        axs[0].plot(
+            np.asarray(self.analysis.time[sl]),
+            self.analysis["v_r_source"][sl],
+            label="source",
+        )
+        axs[1].plot(
+            np.asarray(self.analysis.time[sl]),
+            self.analysis["v_r_sink"][sl],
+            label="sink",
+        )
 
         for ax in axs:
             ax.set_ylabel("Resistance (R)")
 
-        axs[1].set_xlabel("Time (ms)")
+        axs[1].set_xlabel("Time (s)")
 
         for ax in axs:
             ax.grid()
             ax.legend()
 
-    def plot(self):
-        self._plot_capacitors()
-        self._plot_cap_switches()
-        self._plot_input_output()
-        self._plot_io_switches()
-        self._plot_power_lines()
-        self._plot_src_sink_power()
-        self._plot_src_sink_r()
+    def _plot_energy(self, sl: slice = slice(None)):
+        _, axs = plt.subplots(3, 1, sharex=True)
+
+        axs[0].set_title("Energy over time")
+
+        # calculate power from simulation rather take in input for granted
+        src_energy = self.cum_energy("src", "v_r_source")
+        sink_energy = self.cum_energy("sink", "v_r_sink")
+        diff = src_energy - sink_energy
+
+        axs[0].plot(np.asarray(self.analysis.time[sl]), src_energy[sl], label="src")
+        axs[1].plot(np.asarray(self.analysis.time[sl]), sink_energy[sl], label="sink")
+        axs[2].plot(np.asarray(self.analysis.time[sl]), diff[sl], label="diff")
+
+        for ax in axs:
+            ax.grid()
+            ax.legend()
+
+        axs[1].set_ylabel("Energy (J)")
+        axs[-1].set_xlabel("Time")
+
+    def cum_energy(self, v_label: str, r_label) -> ArrayLike:
+        """Calculates cumulative energy given voltage and resistance.
+
+        Args:
+            v_label: Voltage label.
+            r_label: Resistance label.
+
+        Returns:
+            Cumulative energy.
+        """
+
+        dt = np.diff(self.analysis.time)
+
+        volts = self.analysis[v_label]
+        res = self.analysis[r_label]
+        power = volts**2 / res
+
+        cum_energy = np.concat(([0.0], np.cumsum(0.5 * (power[1:] + power[:-1]) * dt)))
+
+        return cum_energy
+
+    def _plot_cap_energy(self, sl: slice = slice(None)):
+        # Number of capacitors + total energy
+        num_plots = len(self.config.caps) + 1
+        _, axs = plt.subplots(num_plots, 1, sharex=True)
+
+        total_energy_list = []
+
+        for idx, cap in enumerate(self.config.caps):
+            # calculate energy from 1/2 C V^2
+            energy = 0.5 * cap.farads * (self.analysis[f"c{idx}_pos"][sl] ** 2)
+            total_energy_list.append(energy)
+
+            axs[idx].plot(
+                np.asarray(self.analysis.time[sl]), energy, label=f"{cap.farads}"
+            )
+
+        total_energy = np.sum(total_energy_list, axis=0)
+        axs[-1].plot(np.asarray(self.analysis.time[sl]), total_energy, label="Total")
+
+        for ax in axs:
+            ax.grid()
+            ax.legend()
+            ax.set_ylabel("Energy (J)")
+
+        axs[-1].set_xlabel("Time")
+
+    def _plot_cap_current(self, sl: slice = slice(None)):
+        _, axs = plt.subplots(len(self.config.caps), 1, sharex=True)
+
+        # Titles
+        axs[0].set_title("Capacitor Currents")
+
+        for idx, cap in enumerate(self.config.caps):
+            # Voltage plot (column 0)
+            axs[idx].plot(
+                np.asarray(self.analysis.time[sl]),
+                self.analysis[f"v_sense_{idx}"][sl],
+                label=f"{cap.farads}",
+            )
+            axs[idx].set_ylabel("Current (A)")
+
+        axs[-1].set_xlabel("Time (s)")
+
+        for ax in axs:
+            ax.grid()
+            ax.legend()
+
+    def plot(self, sl: slice = slice(None)):
+        self._plot_capacitors(sl)
+        self._plot_cap_switches(sl)
+        self._plot_input_output(sl)
+        self._plot_io_switches(sl)
+        self._plot_power_lines(sl)
+        self._plot_src_sink_power(sl)
+        self._plot_src_sink_r(sl)
+        self._plot_energy(sl)
+        self._plot_cap_energy(sl)
+        self._plot_cap_current(sl)
 
         plt.show(block=False)
         input("Press enter to close figures...")
+
+    def plot_time(self, start: float | None = None, end: float | None = None):
+
+        time = self.analysis.time
+
+        # start
+        if start is None:
+            start_idx = 0
+        else:
+            start_idx = np.searchsorted(time, start, side="left")
+
+        if end is None:
+            end_idx = len(time)
+        else:
+            end_idx = np.searchsorted(time, end, side="right")
+
+        self.plot(slice(start_idx, end_idx))
 
     def save(self):
         pass
