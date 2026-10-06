@@ -18,6 +18,7 @@ from numpy.typing import ArrayLike
 from PySpice.Spice.Netlist import Circuit
 from PySpice.Spice.NgSpice.Shared import NgSpiceShared
 from PySpice.Unit import u_kOhm, u_ms, u_Ohm, u_s, u_V
+from scipy.integrate import cumulative_trapezoid
 
 
 class SwitchedComponent:
@@ -784,8 +785,8 @@ class CapacitorStorageSim:
                     power = self.config.src.get_power(time)
                     voltage[0] = power
                 else:
-                    # voltage[0] = 1e-9
-                    voltage[0] = 100
+                    voltage[0] = 1e-9
+                    # voltage[0] = 100
 
             # contrtol the sink power
             # voltage is power, see logic in _Create_circuit
@@ -904,7 +905,7 @@ class CapacitorStorageSim:
             "_r_source",
             "v_r_source",
             circuit.gnd,
-            voltage_expression="{min(max(V(v_src_pos)**2/V(v_pwr_source), 1e-3), 1e9)}",
+            voltage_expression="{min(max(abs(V(v_src_pos)**2/V(v_pwr_source)), 10), 1e9)}",
         )
 
         circuit.raw_spice += "R1 v_src_pos src R='{V(v_r_source)}'\n"
@@ -980,12 +981,12 @@ class CapacitorStorageSim:
         # Direct change
         #
 
-        # circuit.BehavioralSource(
-        #    "_r_sink",
-        #    "v_r_sink",
-        #    circuit.gnd,
-        #    voltage_expression=f"{{v(sink) > {self.config.sink.v_min} ? v(sink)**2 / v(v_pwr_sink) : 1e9}}",
-        # )
+        #circuit.BehavioralSource(
+        #   "_r_sink",
+        #   "v_r_sink",
+        #   circuit.gnd,
+        #   voltage_expression=f"min(max(v(sink) > {self.config.sink.v_min} ? v(sink)**2 / v(v_pwr_sink) : 1e9, 1000), 1e6)",
+        #)
 
         #
         # Smooth transition
@@ -1020,7 +1021,7 @@ class CapacitorStorageSim:
         circuit.raw_spice += "R2 sink gnd {v(v_r_sink)}\n"
 
         # small buffer cap
-        circuit.C("_sink", "sink", circuit.gnd, 100e-6)
+        circuit.C("_sink", "sink", circuit.gnd, 1e-6)
 
         return circuit
 
@@ -1231,18 +1232,36 @@ class CapacitorStorageSim:
             ax.legend()
 
     def _plot_energy(self, sl: slice = slice(None)):
-        _, axs = plt.subplots(3, 1, sharex=True)
+        _, axs = plt.subplots(4, 1, sharex=True)
 
         axs[0].set_title("Energy over time")
 
         # calculate power from simulation rather take in input for granted
-        src_energy = self.cum_energy("src", "v_r_source")
-        sink_energy = self.cum_energy("sink", "v_r_sink")
+        #src_energy = self.cum_energy("src", "v_r_source")
+        #sink_energy = self.cum_energy("sink", "v_r_sink")
+
+        # gets total
+        #src_energy = np.trapezoid(self.analysis["v_pwr_source"], x=self.analysis.time)
+        #sink_energy = np.trapezoid(self.analysis["v_pwr_sink"], x=self.analysis.time)
+
+        src_energy = cumulative_trapezoid(self.analysis["v_pwr_source"], self.analysis.time, initial=0)
+        sink_energy = cumulative_trapezoid(self.analysis["v_pwr_sink"], self.analysis.time, initial=0)
+
         diff = src_energy - sink_energy
 
         axs[0].plot(np.asarray(self.analysis.time[sl]), src_energy[sl], label="src")
         axs[1].plot(np.asarray(self.analysis.time[sl]), sink_energy[sl], label="sink")
         axs[2].plot(np.asarray(self.analysis.time[sl]), diff[sl], label="diff")
+
+        # energy in capacitors
+        total_energy_list = []
+        for idx, cap in enumerate(self.config.caps):
+            # calculate energy from 1/2 C V^2
+            energy = 0.5 * cap.farads * (self.analysis[f"c{idx}_pos"][sl] ** 2)
+            total_energy_list.append(energy)
+        total_energy = np.sum(total_energy_list, axis=0)
+        axs[3].plot(np.asarray(self.analysis.time[sl]), total_energy,
+                     label="caps")
 
         for ax in axs:
             ax.grid()
@@ -1276,6 +1295,8 @@ class CapacitorStorageSim:
         # Number of capacitors + total energy
         num_plots = len(self.config.caps) + 1
         _, axs = plt.subplots(num_plots, 1, sharex=True)
+
+        axs[0].set_title("Energy in capacitors")
 
         total_energy_list = []
 

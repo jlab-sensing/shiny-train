@@ -44,10 +44,10 @@ from pyscipopt import Model, quicksum
 from pyscipopt.recipes.nonlinear import set_nonlinear_objective
 
 from .models import (
-    LeacsCapacitor,
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
     ConstantSource,
+    LeacsCapacitor,
     SMSink,
 )
 from .state_machines import Task, init_SinkSM
