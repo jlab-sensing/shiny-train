@@ -7,7 +7,8 @@ can be controlled from outside the original function.
 import math
 import os
 from abc import ABC
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+from multiprocessing import Pool
 
 import h5py
 import matplotlib.pyplot as plt
@@ -736,6 +737,23 @@ class CapacitorStorageSimConfig:
         return
 
 
+@dataclass
+class SimulationResults:
+    """Container for storing simulation results.
+
+    Args:
+        src_energy: Energy produced from the source.
+        sink_energy: Energy consumed by the sink.
+        diff_energy: Difference between produce and consumed energy.
+        cap_energy: Energy remaining in capacitor.
+    """
+
+    src_energy: float = 0.0
+    sink_energy: float = 0.0
+    diff_energy: float = 0.0
+    cap_energy: float = 0.0
+
+
 class CapacitorStorageSim:
     class CustomShared(NgSpiceShared):
         """Class that takes in a callback and updates the current state of the
@@ -981,12 +999,12 @@ class CapacitorStorageSim:
         # Direct change
         #
 
-        #circuit.BehavioralSource(
+        # circuit.BehavioralSource(
         #   "_r_sink",
         #   "v_r_sink",
         #   circuit.gnd,
         #   voltage_expression=f"min(max(v(sink) > {self.config.sink.v_min} ? v(sink)**2 / v(v_pwr_sink) : 1e9, 1000), 1e6)",
-        #)
+        # )
 
         #
         # Smooth transition
@@ -1055,7 +1073,7 @@ class CapacitorStorageSim:
 
         return analysis
 
-    def run(self, end_time: float = 2.0):
+    def run(self, end_time: float = 2.0) -> SimulationResults:
         """Run the simulation on a set of capacitor values.
 
         Args:
@@ -1063,8 +1081,84 @@ class CapacitorStorageSim:
             end_time: Simulation end time in seconds
         """
 
-        self.circuit = self._create_circuit()
-        self.analysis = self._simulate(self.circuit)
+        circuit = self._create_circuit()
+        analysis = self._simulate(circuit)
+
+        # Calculate results
+        results = SimulationResults()
+        results.src_energy = self._get_src_energy(analysis)[-1]
+        results.sink_energy = self._get_sink_energy(analysis)[-1]
+        results.diff_energy = self._get_diff_energy(analysis)[-1]
+        results.cap_energy = self._get_sum_cap_energy(analysis)[-1]
+
+        # save to class
+        self.circuit = circuit
+        self.analysis = analysis
+        self.results = results
+
+        return results
+
+    def _get_src_energy(self, analysis) -> ArrayLike:
+        """Get source energy at each timestep.
+
+        Returns:
+            Cumulative sum of energy at each timestep.
+        """
+
+        energy = cumulative_trapezoid(
+            analysis["v_pwr_source"], analysis.time, initial=0
+        )
+
+        return energy
+
+    def _get_sink_energy(self, analysis) -> ArrayLike:
+        """Get sink energy at each timestep.
+
+        Returns:
+            Cumulative sum of energy at each timestep.
+        """
+
+        energy = cumulative_trapezoid(analysis["v_pwr_sink"], analysis.time, initial=0)
+
+        return energy
+
+    def _get_diff_energy(self, analysis) -> ArrayLike:
+        """Get difference between source and sink energy.
+
+        Returns:
+            Cumulative sum of energy at each timestep.
+        """
+
+        diff = self._get_src_energy(analysis) - self._get_sink_energy(analysis)
+        return diff
+
+    def _get_cap_energy(self, analysis) -> list[ArrayLike]:
+        """Get energy in each of the capacitors.
+
+        Returns:
+            Energy at each timestamp.
+        """
+
+        # energy in capacitors
+        energy_list = []
+        for idx, cap in enumerate(self.config.caps):
+            # calculate energy from 1/2 C V^2
+            energy = 0.5 * cap.farads * (analysis[f"c{idx}_pos"] ** 2)
+            energy_list.append(energy)
+
+        return energy_list
+
+    def _get_sum_cap_energy(self, analysis) -> ArrayLike:
+        """Get the sum of energy in all capacitors.
+
+        Returns:
+            Energy at each timestamp.
+        """
+
+        energy_list = self._get_cap_energy(analysis)
+        total_energy = np.sum(energy_list, axis=0)
+
+        return total_energy
 
     def _plot_capacitors(self, sl: slice = slice(None)):
         _, axs = plt.subplots(len(self.config.caps), 1, sharex=True)
@@ -1237,31 +1331,25 @@ class CapacitorStorageSim:
         axs[0].set_title("Energy over time")
 
         # calculate power from simulation rather take in input for granted
-        #src_energy = self.cum_energy("src", "v_r_source")
-        #sink_energy = self.cum_energy("sink", "v_r_sink")
+        # src_energy = self.cum_energy("src", "v_r_source")
+        # sink_energy = self.cum_energy("sink", "v_r_sink")
 
         # gets total
-        #src_energy = np.trapezoid(self.analysis["v_pwr_source"], x=self.analysis.time)
-        #sink_energy = np.trapezoid(self.analysis["v_pwr_sink"], x=self.analysis.time)
+        # src_energy = np.trapezoid(self.analysis["v_pwr_source"], x=self.analysis.time)
+        # sink_energy = np.trapezoid(self.analysis["v_pwr_sink"], x=self.analysis.time)
 
-        src_energy = cumulative_trapezoid(self.analysis["v_pwr_source"], self.analysis.time, initial=0)
-        sink_energy = cumulative_trapezoid(self.analysis["v_pwr_sink"], self.analysis.time, initial=0)
-
-        diff = src_energy - sink_energy
+        src_energy = self._get_src_energy(self.analysis)
+        sink_energy = self._get_sink_energy(self.analysis)
+        diff = self._get_diff_energy(self.analysis)
 
         axs[0].plot(np.asarray(self.analysis.time[sl]), src_energy[sl], label="src")
         axs[1].plot(np.asarray(self.analysis.time[sl]), sink_energy[sl], label="sink")
         axs[2].plot(np.asarray(self.analysis.time[sl]), diff[sl], label="diff")
 
         # energy in capacitors
-        total_energy_list = []
-        for idx, cap in enumerate(self.config.caps):
-            # calculate energy from 1/2 C V^2
-            energy = 0.5 * cap.farads * (self.analysis[f"c{idx}_pos"][sl] ** 2)
-            total_energy_list.append(energy)
-        total_energy = np.sum(total_energy_list, axis=0)
-        axs[3].plot(np.asarray(self.analysis.time[sl]), total_energy,
-                     label="caps")
+        # total_energy_list = self._get_cap_energy(self.analysis)
+        total_energy = self._get_sum_cap_energy(self.analysis)
+        axs[3].plot(np.asarray(self.analysis.time[sl]), total_energy, label="caps")
 
         for ax in axs:
             ax.grid()
@@ -1298,19 +1386,16 @@ class CapacitorStorageSim:
 
         axs[0].set_title("Energy in capacitors")
 
-        total_energy_list = []
-
-        for idx, cap in enumerate(self.config.caps):
-            # calculate energy from 1/2 C V^2
-            energy = 0.5 * cap.farads * (self.analysis[f"c{idx}_pos"][sl] ** 2)
-            total_energy_list.append(energy)
-
+        total_energy_list = self._get_cap_energy(self.analysis)
+        for idx, (cap, energy) in enumerate(zip(self.config.caps, total_energy_list)):
             axs[idx].plot(
-                np.asarray(self.analysis.time[sl]), energy, label=f"{cap.farads}"
+                np.asarray(self.analysis.time[sl]), energy[sl], label=f"{cap.farads}"
             )
 
-        total_energy = np.sum(total_energy_list, axis=0)
-        axs[-1].plot(np.asarray(self.analysis.time[sl]), total_energy, label="Total")
+        total_energy = self._get_sum_cap_energy(self.analysis)
+        axs[-1].plot(
+            np.asarray(self.analysis.time[sl]), total_energy[sl], label="Total"
+        )
 
         for ax in axs:
             ax.grid()
@@ -1374,6 +1459,128 @@ class CapacitorStorageSim:
 
     def save(self):
         pass
+
+
+class SimulationRunner:
+    """Runs one or more instances of CapacitorStorageSim"""
+
+    def __init__(
+        self,
+        configs: list[CapacitorStorageSimConfig],
+        names: list[str],
+        nproc: int | None = None,
+    ):
+        """
+        Initialize a runner to parallelize simulations.
+
+        Names are used to label plots.
+
+        Args:
+            configs: Simulation configurations.
+            names: Readable names for simulations.
+            nproc: Number of processes to spawn.
+        """
+
+        self.configs = configs
+        self.names = names
+
+        self.nproc = nproc
+
+    def add(self, configs: list[CapacitorStorageSimConfig]):
+        """Adds additional simulation configurations to run.
+
+
+        Args:
+            configs: Set of simulation configurations.
+        """
+
+        # save to class
+        self.configs = configs
+
+        for c in configs:
+            pass
+
+    def run(self, end_time: float = 2.0) -> list[SimulationResults]:
+        """Runs simulations concurrently.
+
+        Args:
+            end_time: Duration of simulation.
+
+        Returns:
+            Dictionary containing the results.
+        """
+
+        with Pool(self.nproc) as p:
+            results = p.map(self._run_config, self.configs)
+
+        self.results = results
+
+        return results
+
+    def _run_config(self, config: CapacitorStorageSimConfig) -> SimulationResults:
+        sim = CapacitorStorageSim(config)
+        result = sim.run()
+
+        return result
+
+    def plot(self):
+        self._plot_energy(self.results)
+
+        plt.show(block=False)
+
+        input("Press enter to close figures...")
+
+    def _plot_energy(self, results):
+        field_names = [f.name for f in fields(SimulationResults)]
+        n_groups = len(results)
+        n_bars = len(field_names)
+
+        if self.names is None:
+            self.names = [f"Run {i}" for i in range(n_groups)]
+
+        # Okabe-Ito palette: designed to be distinguishable under the
+        # common forms of color vision deficiency
+        colors = [
+            "#0072B2",
+            "#E69F00",
+            "#009E73",
+            "#CC79A7",
+            "#56B4E9",
+            "#D55E00",
+            "#F0E442",
+            "#000000",
+        ]
+        hatches = ["", "//", "..", "xx", "\\\\", "++", "oo", "--"]
+
+        x = np.arange(n_groups)
+        width = 0.8 / n_bars  # total group width of 0.8
+
+        fig, ax = plt.subplots()
+
+        for i, name in enumerate(field_names):
+            values = [getattr(r, name) for r in results]
+            # Offset so the bars in each group are centered on the tick
+            offset = (i - (n_bars - 1) / 2) * width
+            bars = ax.bar(
+                x + offset,
+                values,
+                width,
+                label=name,
+                color=colors[i % len(colors)],
+                hatch=hatches[i % len(hatches)],
+                edgecolor="black",
+                linewidth=0.8,
+            )
+            ax.bar_label(bars, fmt="%.2g", padding=2, fontsize=8)
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(self.names)
+        ax.set_ylabel("Energy (J)")
+        ax.set_title("Simulation Results")
+        ax.axhline(0, color="black", linewidth=0.8)  # diff_energy can be negative
+        ax.legend()
+
+        return fig, ax
 
 
 class SineShared(NgSpiceShared):
