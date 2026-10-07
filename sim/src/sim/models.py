@@ -7,14 +7,16 @@ can be controlled from outside the original function.
 import math
 import os
 from abc import ABC
+from collections.abc import Callable
 from dataclasses import dataclass, fields
-from multiprocessing import Pool
+from multiprocessing import Lock, Pool
 
 import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 import PySpice
 from cffi import FFI
+from matplotlib.figure import Figure
 from numpy.typing import ArrayLike
 from PySpice.Spice.Netlist import Circuit
 from PySpice.Spice.NgSpice.Shared import NgSpiceShared
@@ -683,6 +685,102 @@ class SMSink(Sink):
         return self.sm.load_value
 
 
+class SimulationPlotter:
+    def __init__(self, layout: str = "moasic"):
+        """Initialize a plotter.
+
+        Valid options for layout is the following:
+            "individual": Each plot gets it's own figure.
+            "moasic": All plots shown in the same figure.
+
+        Args:
+            layout: Type of plot layout.
+        """
+
+        # list of valid plot names
+        plot_names = [
+            "capacitors",
+            "cap_switches",
+            "input_output",
+            "io_switches",
+            "power_lines",
+            "src_sink_power",
+            "src_sink_r",
+            "energy",
+            "cap_energy",
+            "cap_current",
+        ]
+
+        if layout == "individual":
+            figs = {n: plt.figure() for n in plot_names}
+
+        elif layout == "moasic":
+            mfig = plt.figure(figsize=(16, 12))
+            subfigs = mfig.subfigures(4, 3)
+
+            figs = {
+                "input_output": subfigs[0][0],
+                "power_lines": subfigs[0][1],
+                "capacitors": subfigs[0][2],
+                "io_switches": subfigs[1][0],
+                "cap_switches": subfigs[1][1],
+                "src_sink_r": subfigs[2][0],
+                "src_sink_power": subfigs[2][1],
+                "cap_current": subfigs[2][2],
+                "energy": subfigs[3][0],
+                "cap_energy": subfigs[3][1],
+            }
+
+        else:
+            raise NotImplementedError(f"Layout {layout} is not implemented.")
+
+        # make sure every valid plot name has a figure
+        missing = set(plot_names) - figs.keys()
+        if missing:
+            raise ValueError(
+                f"Layout '{layout}' is missing figures for: {sorted(missing)}"
+            )
+
+        # save params
+        self.layout = layout
+        self.figs = figs
+
+    def get_fig(self, name: str) -> Figure:
+        """Gets the figure object based on a name.
+
+        Args:
+            name: Name of the figure.
+
+        Returns:
+            Figure instasnce.
+        """
+
+        # check that it exists
+        if name not in self.figs:
+            raise NotImplementedError(f"Figure {name} is not implemented in the layout")
+
+        return self.figs[name]
+
+    def show(self):
+        plt.show(block=False)
+        input("Press enter to close figures...")
+
+    def save(self, path: str, overwrite: bool = True, prefix: str = ""):
+        """Saves figures to the path.
+
+        Names are determined by configuration definitions.
+
+        By default it will overwrite any existing figures.
+
+        Args:
+            path: Path to save figure outputs.
+            overwrite: If existing files should be overwritten.
+            prefix: Prefix to add to filenames.
+        """
+
+        return
+
+
 class CapacitorStorageSimConfig:
     def __init__(
         self,
@@ -690,6 +788,8 @@ class CapacitorStorageSimConfig:
         caps: list[Capacitor],
         sink: Sink,
         p_lines: int,
+        plotter: SimulationPlotter | None = None,
+        lock: Lock | None = None,
     ):
         """
         Power lines connect the power source to the sink. This allows for
@@ -703,6 +803,8 @@ class CapacitorStorageSimConfig:
             caps: Capacitor array values
             sink: Power sink
             p_lines: Number of available power lines
+            plotter: Plotter object
+            lock: Mutex lock for multiprocessing
         """
 
         # save parameters
@@ -710,6 +812,18 @@ class CapacitorStorageSimConfig:
         self.caps = caps
         self.sink = sink
         self.p_lines = p_lines
+
+        # default to an instance of plotter
+        if plotter:
+            self.plotter = plotter
+        else:
+            self.plotter = SimulationPlotter()
+
+        # default to an instance of lock
+        if lock:
+            self.lock = lock
+        else:
+            self.lock = Lock()
 
         # Initialize number of switches
         SwitchedComponent.__init__(src, p_lines)
@@ -1160,8 +1274,8 @@ class CapacitorStorageSim:
 
         return total_energy
 
-    def _plot_capacitors(self, sl: slice = slice(None)):
-        _, axs = plt.subplots(len(self.config.caps), 1, sharex=True)
+    def _plot_capacitors(self, fig: Figure, sl: slice = slice(None)):
+        axs = fig.subplots(len(self.config.caps), 1, sharex=True)
 
         # Titles
         axs[0].set_title("Capacitor Voltages")
@@ -1181,9 +1295,9 @@ class CapacitorStorageSim:
             ax.grid()
             ax.legend()
 
-    def _plot_cap_switches(self, sl: slice = slice(None)):
+    def _plot_cap_switches(self, fig: Figure, sl: slice = slice(None)):
         num_switches = self.config.p_lines * len(self.config.caps)
-        _, axs = plt.subplots(num_switches, sharex=True)
+        axs = fig.subplots(num_switches, sharex=True)
 
         axs[0].set_title("Capacitor Switch states")
 
@@ -1195,7 +1309,7 @@ class CapacitorStorageSim:
                     self.analysis[f"ctrl_pwr{line}_c{idx}_pos"][sl],
                     label=f"C: {cap.farads} line: {line}",
                 )
-                axs[row].set_ylabel("Switch State")
+                axs[row].set_ylabel("State")
                 row += 1
 
         axs[-1].set_xlabel("Time (s)")
@@ -1205,8 +1319,8 @@ class CapacitorStorageSim:
             ax.legend()
             ax.set_ylim(-0.1, 1.1)
 
-    def _plot_input_output(self, sl: slice = slice(None)):
-        _, axs = plt.subplots(2, 1, sharex=True)
+    def _plot_input_output(self, fig: Figure, sl: slice = slice(None)):
+        axs = fig.subplots(2, 1, sharex=True)
 
         axs[0].set_title("Source/Sink Voltages")
 
@@ -1226,9 +1340,9 @@ class CapacitorStorageSim:
             ax.grid()
             ax.legend()
 
-    def _plot_io_switches(self, sl: slice = slice(None)):
+    def _plot_io_switches(self, fig: Figure, sl: slice = slice(None)):
         rows = 2 * self.config.p_lines
-        _, axs = plt.subplots(rows, sharex=True)
+        axs = fig.subplots(rows, sharex=True)
 
         axs[0].set_title("Source/Sink Switches")
 
@@ -1258,8 +1372,8 @@ class CapacitorStorageSim:
             ax.legend()
             ax.set_ylim(-0.1, 1.1)
 
-    def _plot_power_lines(self, sl: slice = slice(None)):
-        _, axs = plt.subplots(self.config.p_lines, sharex=True)
+    def _plot_power_lines(self, fig: Figure, sl: slice = slice(None)):
+        axs = fig.subplots(self.config.p_lines, sharex=True)
 
         axs[0].set_title("Power line voltages")
 
@@ -1275,8 +1389,8 @@ class CapacitorStorageSim:
             ax.grid()
             ax.legend()
 
-    def _plot_src_sink_power(self, sl: slice = slice(None)):
-        _, axs = plt.subplots(2, 1, sharex=True)
+    def _plot_src_sink_power(self, fig: Figure, sl: slice = slice(None)):
+        axs = fig.subplots(2, 1, sharex=True)
 
         axs[0].set_title("Source/Sink Power")
 
@@ -1300,8 +1414,8 @@ class CapacitorStorageSim:
             ax.grid()
             ax.legend()
 
-    def _plot_src_sink_r(self, sl: slice = slice(None)):
-        _, axs = plt.subplots(2, 1, sharex=True)
+    def _plot_src_sink_r(self, fig: Figure, sl: slice = slice(None)):
+        axs = fig.subplots(2, 1, sharex=True)
 
         axs[0].set_title("Source/Sink Resistance")
 
@@ -1325,8 +1439,8 @@ class CapacitorStorageSim:
             ax.grid()
             ax.legend()
 
-    def _plot_energy(self, sl: slice = slice(None)):
-        _, axs = plt.subplots(4, 1, sharex=True)
+    def _plot_energy(self, fig: Figure, sl: slice = slice(None)):
+        axs = fig.subplots(4, 1, sharex=True)
 
         axs[0].set_title("Energy over time")
 
@@ -1356,7 +1470,7 @@ class CapacitorStorageSim:
             ax.legend()
 
         axs[1].set_ylabel("Energy (J)")
-        axs[-1].set_xlabel("Time")
+        axs[-1].set_xlabel("Time (s)")
 
     def cum_energy(self, v_label: str, r_label) -> ArrayLike:
         """Calculates cumulative energy given voltage and resistance.
@@ -1379,10 +1493,10 @@ class CapacitorStorageSim:
 
         return cum_energy
 
-    def _plot_cap_energy(self, sl: slice = slice(None)):
+    def _plot_cap_energy(self, fig: Figure, sl: slice = slice(None)):
         # Number of capacitors + total energy
         num_plots = len(self.config.caps) + 1
-        _, axs = plt.subplots(num_plots, 1, sharex=True)
+        axs = fig.subplots(num_plots, 1, sharex=True)
 
         axs[0].set_title("Energy in capacitors")
 
@@ -1402,10 +1516,10 @@ class CapacitorStorageSim:
             ax.legend()
             ax.set_ylabel("Energy (J)")
 
-        axs[-1].set_xlabel("Time")
+        axs[-1].set_xlabel("Time (s)")
 
-    def _plot_cap_current(self, sl: slice = slice(None)):
-        _, axs = plt.subplots(len(self.config.caps), 1, sharex=True)
+    def _plot_cap_current(self, fig: Figure, sl: slice = slice(None)):
+        axs = fig.subplots(len(self.config.caps), 1, sharex=True)
 
         # Titles
         axs[0].set_title("Capacitor Currents")
@@ -1425,22 +1539,39 @@ class CapacitorStorageSim:
             ax.grid()
             ax.legend()
 
-    def plot(self, sl: slice = slice(None)):
-        self._plot_capacitors(sl)
-        self._plot_cap_switches(sl)
-        self._plot_input_output(sl)
-        self._plot_io_switches(sl)
-        self._plot_power_lines(sl)
-        self._plot_src_sink_power(sl)
-        self._plot_src_sink_r(sl)
-        self._plot_energy(sl)
-        self._plot_cap_energy(sl)
-        self._plot_cap_current(sl)
+    def show(self):
+        """Helper function to show plots from a simulation."""
 
-        plt.show(block=False)
-        input("Press enter to close figures...")
+        self.config.plotter.show()
+
+    def plot(self, sl: slice = slice(None)):
+        """Plots multiple subplots on given axes.
+
+        Args:
+            sl: Slice of data to plot
+        """
+
+        self.plot_with_lock(self._plot_capacitors, "capacitors", sl=sl)
+        self.plot_with_lock(self._plot_cap_switches, "cap_switches", sl=sl)
+        self.plot_with_lock(self._plot_input_output, "input_output", sl=sl)
+        self.plot_with_lock(self._plot_io_switches, "io_switches", sl=sl)
+        self.plot_with_lock(self._plot_power_lines, "power_lines", sl=sl)
+        self.plot_with_lock(self._plot_src_sink_power, "src_sink_power", sl=sl)
+        self.plot_with_lock(self._plot_src_sink_r, "src_sink_r", sl=sl)
+        self.plot_with_lock(self._plot_energy, "energy", sl=sl)
+        self.plot_with_lock(self._plot_cap_energy, "cap_energy", sl=sl)
+        self.plot_with_lock(self._plot_cap_current, "cap_current", sl=sl)
 
     def plot_time(self, start: float | None = None, end: float | None = None):
+        """Plot based on time.
+
+        Similar to `plot` but instead of slice you specify start and end. Start
+        and end are specified based on time since simulation start.
+
+        Args:
+            start: Start time
+            end: End time
+        """
 
         time = self.analysis.time
 
@@ -1456,6 +1587,20 @@ class CapacitorStorageSim:
             end_idx = np.searchsorted(time, end, side="right")
 
         self.plot(slice(start_idx, end_idx))
+
+    def plot_with_lock(self, fn: Callable[Figure, slice], name: str, **kwargs):
+        """Calls a plotting function with a mutex lock.
+
+        Args:
+            fn: Plotting function.
+            name: Name of the plot.
+            **kwargs: Passed to fn.
+        """
+
+        fig = self.config.plotter.get_fig(name)
+        if self.config.lock:
+            with self.config.lock:
+                fn(fig, **kwargs)
 
     def save(self):
         pass
