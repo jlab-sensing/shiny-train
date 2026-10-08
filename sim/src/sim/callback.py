@@ -4,14 +4,14 @@ Matrix-form assignment model using HiGHS.
 The mathematical model is
 
     Stage 1:
-        maximize    objective^T z
+        maximize    ones^T z
         subject to  A z <= b
                     z in {0,1}^n
 
     Stage 2:
         minimize    z^T Q z
         subject to  A z <= b
-                    objective^T z == T*
+                    ones^T z == T*
                     z in {0,1}^n
 
 where
@@ -47,7 +47,8 @@ from .models import (
     LeacsCapacitor,
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
-    ConstantSource,
+    SineSource,
+    BonitoSource,
     SMSink,
 )
 from .state_machines import Task, init_SinkSM
@@ -1096,11 +1097,11 @@ if __name__ == "__main__":
         6e-3,
     ]
 
-    src = ConstantSource(
-        1,
-        duration=2,
-        dt=0.01,
-    )
+    # src = ConstantSource(
+    #     1,
+    #     duration=2,
+    #     dt=0.01,
+    # )
 
     # src = SineSource(
     #     1.70e-2,
@@ -1111,11 +1112,11 @@ if __name__ == "__main__":
     #     dt=0.01,
     # )
 
-    # src = BonitoSource(
-    #     '/home/mwmaster/catch/pwr_cars.h5',
-    #     duration=3600,
-    #     downsample=30000
-    # )
+    src = BonitoSource(
+        '/home/mwmaster/catch/pwr_cars.h5',
+        duration=3600,
+        downsample=30000
+    )
 
     caps = [
         LeacsCapacitor(
@@ -1130,14 +1131,17 @@ if __name__ == "__main__":
         Task(
             cost=11.68e-4 * CONST_VOLTAGE,
             duration=0.511,
+            name='measure'
         ),
         Task(
             cost=86.52e-4 * CONST_VOLTAGE,
             duration=0.285,
+            name='tx'
         ),
         Task(
             cost=20.03e-4 * CONST_VOLTAGE,
             duration=0.937,
+            name='rx'
         ),
     ]
 

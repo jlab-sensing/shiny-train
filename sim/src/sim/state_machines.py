@@ -29,19 +29,7 @@ class Capacitor:
 class Task:
     cost: float
     duration: float
-
-
-class StateTreeNode:
-    def __init__(self, value):
-        """ V
-        value is a Task object
-        children is a (potentially empty) list of child StateTreeNodes
-        """
-        self.value = value
-        self.children = []
-
-    def add_child(self, child_node):
-        self.children.append(child_node)
+    name: str
 
 
 class SinkSM(StateChart):
@@ -52,9 +40,9 @@ class SinkSM(StateChart):
     load_value = 4.64e-3 * DC_VOLTS  # OUTPUT: the energy consumption for next timestep
 
     class task(State.Compound):
-        measure = State("measure", value=Task(cost=11.68e-3 * DC_VOLTS, duration=0.511))
-        tx = State("tx", value=Task(cost=86.52e-3 * DC_VOLTS, duration=0.285))
-        rx = State("rx", value=Task(cost=20.03e-3 * DC_VOLTS, duration=0.927))
+        measure = State("measure", value=Task(cost=11.68e-3 * DC_VOLTS, duration=0.511, name='measure'))
+        tx = State("tx", value=Task(cost=86.52e-3 * DC_VOLTS, duration=0.285, name='tx'))
+        rx = State("rx", value=Task(cost=20.03e-3 * DC_VOLTS, duration=0.927, name='rx'))
         h = HistoryState(type="deep")
 
     sleep = State("sleep", initial=True, value=4.64e-3 * DC_VOLTS)
