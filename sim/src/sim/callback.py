@@ -44,13 +44,12 @@ from pyscipopt import Model, quicksum
 from pyscipopt.recipes.nonlinear import set_nonlinear_objective
 
 from .models import (
+    BonitoSource,
     Capacitor,
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
-    SineSource,
-    BonitoSource,
-    SMSink,
     LeacsCapacitor,
+    SMSink,
 )
 from .state_machines import Task, init_SinkSM
 
@@ -1111,9 +1110,7 @@ if __name__ == "__main__":
     # )
 
     src = BonitoSource(
-        '/home/mwmaster/catch/pwr_cars.h5',
-        duration=3600,
-        downsample=30000
+        "/home/mwmaster/catch/pwr_cars.h5", duration=3600, downsample=30000
     )
 
     caps = [
@@ -1126,21 +1123,9 @@ if __name__ == "__main__":
     ]
 
     tasks = [  # bookkeeping for LeacSimConfig; SMSink is hardcoded with identical Tasks
-        Task(
-            cost=11.68e-4 * CONST_VOLTAGE,
-            duration=0.511,
-            name='measure'
-        ),
-        Task(
-            cost=86.52e-4 * CONST_VOLTAGE,
-            duration=0.285,
-            name='tx'
-        ),
-        Task(
-            cost=20.03e-4 * CONST_VOLTAGE,
-            duration=0.937,
-            name='rx'
-        ),
+        Task(cost=11.68e-4 * CONST_VOLTAGE, duration=0.511, name="measure"),
+        Task(cost=86.52e-4 * CONST_VOLTAGE, duration=0.285, name="tx"),
+        Task(cost=20.03e-4 * CONST_VOLTAGE, duration=0.937, name="rx"),
     ]
 
     sink = SMSink(init_SinkSM(caps[0]))

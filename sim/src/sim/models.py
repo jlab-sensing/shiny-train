@@ -550,7 +550,6 @@ class BonitoSource(Source):
         self.filename = filename
         self.name = name
 
-
         self.offset = offset
         self.duration = duration
         self.downsample = downsample
@@ -1882,17 +1881,6 @@ class CapacitorStorageSim:
 
         self.plotter.plot_single_ts(self.results)
 
-        # self.plot_with_lock(self._plot_capacitors, "capacitors", sl=sl)
-        # self.plot_with_lock(self._plot_cap_switches, "cap_switches", sl=sl)
-        # self.plot_with_lock(self._plot_input_output, "input_output", sl=sl)
-        # self.plot_with_lock(self._plot_io_switches, "io_switches", sl=sl)
-        # self.plot_with_lock(self._plot_power_lines, "power_lines", sl=sl)
-        # self.plot_with_lock(self._plot_src_sink_power, "src_sink_power", sl=sl)
-        # self.plot_with_lock(self._plot_src_sink_r, "src_sink_r", sl=sl)
-        # self.plot_with_lock(self._plot_energy, "energy", sl=sl)
-        # self.plot_with_lock(self._plot_cap_energy, "cap_energy", sl=sl)
-        # self.plot_with_lock(self._plot_cap_current, "cap_current", sl=sl)
-
     def plot_time(self, start: float | None = None, end: float | None = None):
         """Plot based on time.
 
@@ -1919,23 +1907,6 @@ class CapacitorStorageSim:
 
         self.plot(slice(start_idx, end_idx))
 
-    def plot_with_lock(self, fn: Callable[Figure, slice], name: str, **kwargs):
-        """Calls a plotting function with a mutex lock.
-
-        Args:
-            fn: Plotting function.
-            name: Name of the plot.
-            **kwargs: Passed to fn.
-        """
-
-        fig = self.plotter.get_fig(name)
-        if self.lock:
-            with self.lock:
-                fn(fig, **kwargs)
-        else:
-            fn(fig, **kwargs)
-        self.plotter.set_fig(name, fig)
-
     def save(self):
         pass
 
@@ -1946,7 +1917,6 @@ class SimulationRunner:
     def __init__(
         self,
         configs: list[CapacitorStorageSimConfig],
-        names: list[str],
         nproc: int | None = None,
         plotter: SimulationPlotter | None = None,
     ):
@@ -1957,13 +1927,11 @@ class SimulationRunner:
 
         Args:
             configs: Simulation configurations.
-            names: Readable names for simulations.
             nproc: Number of processes to spawn.
             plotter: Simluation plotter.
         """
 
         self.configs = configs
-        self.names = names
 
         self.nproc = nproc
 

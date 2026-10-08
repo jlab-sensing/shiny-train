@@ -56,9 +56,11 @@ if __name__ == "__main__":
 
     ideal_caps = [IdealCapacitor(c) for c in values]
     ideal_config = create_config(ideal_caps)
+    ideal_config.name = "Ideal"
 
     cv_caps = [CVCapacitor(c) for c in values]
     cv_config = create_config(cv_caps)
+    ideal_config.name = "Leaky"
 
     #
     # Runner
@@ -69,12 +71,7 @@ if __name__ == "__main__":
         cv_config,
     ]
 
-    names = [
-        "Ideal",
-        "CV Capacitor",
-    ]
-
-    runner = SimulationRunner(configs, names)
+    runner = SimulationRunner(configs)
     results = runner.run()
     runner.plot()
     runner.show()

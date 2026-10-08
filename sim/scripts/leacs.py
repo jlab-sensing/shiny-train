@@ -9,22 +9,16 @@ configuration based on parameters as shown here.
 
 import time
 
+from sim.callback import LeacSimConfig
 from sim.models import (
+    BonitoSource,
     Capacitor,
-    CapacitorStorageSimConfig,
-    ConstantSink,
-    ConstantSource,
     CVCapacitor,
+    IdealCapacitor,
     SimulationRunner,
     SMSink,
-    BonitoSource,
-    IdealCapacitor,
 )
-from sim.callback import LeacSimConfig
 from sim.state_machines import Task, init_SinkSM
-
-
-
 
 
 def create_config(caps: list[Capacitor]):
@@ -32,9 +26,9 @@ def create_config(caps: list[Capacitor]):
     CONST_VOLTAGE = 3.3
 
     src = BonitoSource(
-        '/home/jtmadden/repos/jlab/shiny-train/sim/data/bonito/pwr_cars.h5',
+        "/home/jtmadden/repos/jlab/shiny-train/sim/data/bonito/pwr_cars.h5",
         duration=3600,
-        downsample=30000
+        downsample=30000,
     )
 
     # src = ConstantSource(
@@ -53,21 +47,9 @@ def create_config(caps: list[Capacitor]):
     # )
 
     tasks = [  # bookkeeping for LeacSimConfig; SMSink is hardcoded with identical Tasks
-        Task(
-            cost=11.68e-4 * CONST_VOLTAGE,
-            duration=0.511,
-            name='measure'
-        ),
-        Task(
-            cost=86.52e-4 * CONST_VOLTAGE,
-            duration=0.285,
-            name='tx'
-        ),
-        Task(
-            cost=20.03e-4 * CONST_VOLTAGE,
-            duration=0.937,
-            name='rx'
-        ),
+        Task(cost=11.68e-4 * CONST_VOLTAGE, duration=0.511, name="measure"),
+        Task(cost=86.52e-4 * CONST_VOLTAGE, duration=0.285, name="tx"),
+        Task(cost=20.03e-4 * CONST_VOLTAGE, duration=0.937, name="rx"),
     ]
 
     sink = SMSink(init_SinkSM(caps[0]))
@@ -84,7 +66,6 @@ def create_config(caps: list[Capacitor]):
     return config
 
 
-
 if __name__ == "__main__":
     cap_values = [
         6e-3,
@@ -94,9 +75,11 @@ if __name__ == "__main__":
 
     ideal_caps = [IdealCapacitor(c) for c in cap_values]
     ideal_config = create_config(ideal_caps)
+    ideal_config.name = "Ideal"
 
     cv_caps = [CVCapacitor(c) for c in cap_values]
     cv_config = create_config(cv_caps)
+    cv_config.name = "Leaky"
 
     #
     # Runner
@@ -107,17 +90,9 @@ if __name__ == "__main__":
         cv_config,
     ]
 
-    names = [
-        "Ideal",
-        "CV Capacitor",
-    ]
-
-    runner = SimulationRunner(configs, names)
+    runner = SimulationRunner(configs)
     start = time.time()
     results = runner.run()
     print(f"runtime: {time.time() - start}")
     runner.plot()
     runner.show()
-
-
-
