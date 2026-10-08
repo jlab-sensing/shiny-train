@@ -44,10 +44,11 @@ from pyscipopt import Model, quicksum
 from pyscipopt.recipes.nonlinear import set_nonlinear_objective
 
 from .models import (
-    LeacsCapacitor,
+    Capacitor,
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
     ConstantSource,
+    LeacsCapacitor,
     SMSink,
 )
 from .state_machines import Task, init_SinkSM
@@ -210,7 +211,7 @@ def build_model(
         energy_costs,
         dtype=float,
     )
-    print('ec: ', energy_costs)
+    print("ec: ", energy_costs)
 
     leakage = np.asarray(
         leakage,
@@ -240,10 +241,10 @@ def build_model(
     # ------------------------------------------------------------
 
     assignment_energy = energy_costs[:, np.newaxis] + leakage[np.newaxis, :]
-    print('assignment_energy: ', assignment_energy)
+    print("assignment_energy: ", assignment_energy)
 
     feasibility = assignment_energy <= E_allowed[np.newaxis, :]
-    print('feas: ', feasibility)
+    print("feas: ", feasibility)
 
     if feasibility.shape != (N, K):
         raise ValueError("feasibility must have shape (N, K)")
@@ -806,10 +807,7 @@ def solve_assignment(
 
     optimal_tasks = round(stage1["objective"])
 
-    print(
-        f"Stage 1 optimal assignments: "
-        f"{optimal_tasks}"
-    )
+    print(f"Stage 1 optimal assignments: {optimal_tasks}")
 
     # ------------------------------------------------------------
     # Stage 2

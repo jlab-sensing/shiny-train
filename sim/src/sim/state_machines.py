@@ -33,7 +33,7 @@ class Task:
 
 class StateTreeNode:
     def __init__(self, value):
-        """ V
+        """V
         value is a Task object
         children is a (potentially empty) list of child StateTreeNodes
         """

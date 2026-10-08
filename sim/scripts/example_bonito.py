@@ -6,10 +6,10 @@ import os
 
 from sim.models import (
     BonitoSource,
-    Capacitor,
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
-    Sink,
+    ConstantSink,
+    CVCapacitor,
 )
 
 
@@ -22,10 +22,10 @@ class MyConfig(CapacitorStorageSimConfig):
         for cap in self.caps:
             cap.connect(0)
 
-        if time < 20:
+        if time < 240:
             self.src.connect(0)
             self.sink.disconnect(0)
-        elif time >= 0.5:
+        else:
             self.src.disconnect(0)
             self.sink.connect(0)
 
@@ -40,17 +40,18 @@ class MyConfig(CapacitorStorageSimConfig):
         #    self.sink.disconnect(0)
 
 
-cap_values = [10e-6, 100e-6]
+cap_values = [10e-6, 47e-6, 100e-6]
 
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 data_path = os.path.join(script_dir, "..", "data", "bonito", "pwr_cars.h5")
 src = BonitoSource(
-    data_path, name="node0", voltage=3.3, downsample=10000, duration=30.0
+    data_path, name="node0", voltage=3.3, downsample=10000, duration=360.0
 )
 
-caps = [Capacitor(c) for c in cap_values]
-sink = Sink()
+caps = [CVCapacitor(c) for c in cap_values]
+# caps = [IdealCapacitor(c) for c in cap_values]
+sink = ConstantSink(0.00001)
 
 config = MyConfig(src, caps, sink, len(caps))
 
