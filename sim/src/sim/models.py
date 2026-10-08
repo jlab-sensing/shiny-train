@@ -6,11 +6,12 @@ can be controlled from outside the original function.
 
 import math
 import os
+import threading
 from abc import ABC
 from collections.abc import Callable
 from dataclasses import dataclass
 from multiprocessing import Manager, Pool
-from threading import Lock
+from queue import Queue
 
 import h5py
 import matplotlib.pyplot as plt
@@ -19,11 +20,12 @@ import PySpice
 from cffi import FFI
 from matplotlib.figure import Figure
 from numpy.typing import ArrayLike
+from PySpice.Probe.WaveForm import TransientAnalysis
 from PySpice.Spice.Netlist import Circuit
 from PySpice.Spice.NgSpice.Shared import NgSpiceShared
-from PySpice.Spice.NgSpice.Simulation import TransientAnalysis
 from PySpice.Unit import u_kOhm, u_ms, u_Ohm, u_s, u_V
 from scipy.integrate import cumulative_trapezoid
+from tqdm import tqdm
 
 
 class SwitchedComponent:
@@ -687,10 +689,7 @@ class SMSink(Sink):
         return self.sm.load_value
 
 
-
-
 class CapacitorStorageSimConfig:
-
     # number of config objects
     count = 0
 
@@ -744,7 +743,6 @@ class CapacitorStorageSimConfig:
             cap.reset()
         self.sink.reset()
 
-
     def farads(self) -> list[float]:
         """Gets list of capacitor farad values.
 
@@ -767,9 +765,7 @@ class CapacitorStorageSimConfig:
 
 
 class SimulationResults:
-    """Container for storing simulation results.
-
-    """
+    """Container for storing simulation results."""
 
     def __init__(
         self,
@@ -787,24 +783,22 @@ class SimulationResults:
             config: Simulation config
         """
 
-
-
         # Sve for later
 
-        #src_energy: Energy produced from the source.
-        #sink_energy: Energy consumed by the sink.
-        #diff_energy: Difference between produce and consumed energy.
-        #cap_energy: Energy remaining in capacitor.
+        # src_energy: Energy produced from the source.
+        # sink_energy: Energy consumed by the sink.
+        # diff_energy: Difference between produce and consumed energy.
+        # cap_energy: Energy remaining in capacitor.
 
-        #src_energy: float = 0.0,
-        #sink_energy: float = 0.0,
-        #diff_energy: float = 0.0,
-        #cap_energy: float = 0.0,
+        # src_energy: float = 0.0,
+        # sink_energy: float = 0.0,
+        # diff_energy: float = 0.0,
+        # cap_energy: float = 0.0,
 
-        #self.src_energy = src_energy
-        #self.sink_energy = sink_energy
-        #self.diff_energy = diff_energy
-        #self.cap_energy = cap_energy
+        # self.src_energy = src_energy
+        # self.sink_energy = sink_energy
+        # self.diff_energy = diff_energy
+        # self.cap_energy = cap_energy
 
         if ts:
             self.ts = ts
@@ -812,7 +806,6 @@ class SimulationResults:
             self.ts = {}
 
         self.config = config
-
 
     def get_slice(self) -> "SimulationResults":
         """Get a slice of the results.
@@ -826,8 +819,6 @@ class SimulationResults:
         """
 
         return self
-
-
 
     def from_analysis(
         self,
@@ -850,16 +841,13 @@ class SimulationResults:
         if config:
             self.config = config
 
-
         self.ts = {}
 
         self.ts["time"] = np.asarray(analysis.time)
 
         self.ts["capacitors"] = []
         for idx, cap in enumerate(self.config.caps):
-            self.ts["capacitors"].append(
-                np.asarray(analysis[f"c{idx}_pos"])
-            )
+            self.ts["capacitors"].append(np.asarray(analysis[f"c{idx}_pos"]))
 
         # first index is capacitors, second index is power lines
         self.ts["cap_switches"] = []
@@ -875,21 +863,15 @@ class SimulationResults:
 
         self.ts["sw_src"] = []
         for n in range(self.config.p_lines):
-            self.ts["sw_src"].append(
-                np.asarray(analysis[f"ctrl_src_pwr{n}_pos"])
-            )
+            self.ts["sw_src"].append(np.asarray(analysis[f"ctrl_src_pwr{n}_pos"]))
 
         self.ts["sw_sink"] = []
         for n in range(self.config.p_lines):
-            self.ts["sw_sink"].append(
-                np.asarray(analysis[f"ctrl_pwr{n}_sink_pos"])
-            )
+            self.ts["sw_sink"].append(np.asarray(analysis[f"ctrl_pwr{n}_sink_pos"]))
 
         self.ts["plines"] = []
         for n in range(self.config.p_lines):
-            self.ts["plines"].append(
-                np.asarray(analysis[f"pwr{n}"])
-            )
+            self.ts["plines"].append(np.asarray(analysis[f"pwr{n}"]))
 
         self.ts["pwr_src"] = np.asarray(analysis["v_pwr_source"])
         self.ts["pwr_sink"] = np.asarray(analysis["v_pwr_sink"])
@@ -907,18 +889,13 @@ class SimulationResults:
 
         self.ts["cap_current"] = []
         for idx, _ in enumerate(self.config.caps):
-            self.ts["cap_current"].append(
-                np.asarray(analysis[f"v_sense_{idx}"])
-            )
+            self.ts["cap_current"].append(np.asarray(analysis[f"v_sense_{idx}"]))
 
         # Save final energies
         self.src_energy = self._get_src_energy(analysis)[-1]
         self.sink_energy = self._get_sink_energy(analysis)[-1]
         self.diff_energy = self._get_diff_energy(analysis)[-1]
         self.cap_energy = self._get_sum_cap_energy(analysis)[-1]
-
-
-
 
     def _get_src_energy(self, analysis) -> ArrayLike:
         """Get source energy at each timestep.
@@ -983,9 +960,6 @@ class SimulationResults:
         return total_energy
 
 
-
-
-
 class SimulationPlotter:
     def __init__(self, layout: str = "moasic"):
         """Initialize a plotter.
@@ -1011,7 +985,6 @@ class SimulationPlotter:
             "energy",
             "cap_energy",
             "cap_current",
-
             # plots that show summary of results
             "final_energy",
         ]
@@ -1023,9 +996,7 @@ class SimulationPlotter:
             ts_fig = plt.figure(figsize=(16, 12))
             ts_subfigs = ts_fig.subfigures(4, 3)
 
-
             fin_fig = plt.figure()
-
 
             figs = {
                 "input_output": ts_subfigs[0][0],
@@ -1038,7 +1009,6 @@ class SimulationPlotter:
                 "cap_current": ts_subfigs[2][2],
                 "energy": ts_subfigs[3][0],
                 "cap_energy": ts_subfigs[3][1],
-
                 "final_energy": fin_fig,
             }
 
@@ -1072,7 +1042,6 @@ class SimulationPlotter:
 
         return self.figs[name]
 
-
     def plot_single_ts(self, res: SimulationResults):
         """Plots single simulation results on new figure.
 
@@ -1081,7 +1050,6 @@ class SimulationPlotter:
         """
 
         self.plot_multiple_ts([res])
-
 
     def plot_multiple_ts(self, results: list[SimulationResults]):
         """Plots multiple timeseries simulation results on new figure.
@@ -1133,8 +1101,6 @@ class SimulationPlotter:
             ax.legend()
             axs[idx].set_ylabel("Voltage (V)")
 
-
-
     def _plot_cap_switches(self, fig: Figure, results: list[SimulationResults]):
         num_switches = self._max_switches(results)
         axs = fig.subplots(num_switches, sharex=True)
@@ -1165,8 +1131,6 @@ class SimulationPlotter:
             ax.legend()
             ax.set_ylim(-0.1, 1.1)
 
-
-
     def _plot_input_output(self, fig: Figure, results: list[SimulationResults]):
         axs = fig.subplots(2, 1, sharex=True)
 
@@ -1177,12 +1141,8 @@ class SimulationPlotter:
             v_src = res.ts["v_src"]
             v_sink = res.ts["v_sink"]
 
-            axs[0].plot(
-                time, v_src, label="src"
-            )
-            axs[1].plot(
-                time, v_sink, label="sink"
-            )
+            axs[0].plot(time, v_src, label="src")
+            axs[1].plot(time, v_sink, label="sink")
 
         for ax in axs:
             ax.set_ylabel("Voltage (V)")
@@ -1192,7 +1152,6 @@ class SimulationPlotter:
         for ax in axs:
             ax.grid()
             ax.legend()
-
 
     def _plot_io_switches(self, fig: Figure, results: list[SimulationResults]):
         rows = 2 * self._max_plines(results)
@@ -1209,15 +1168,18 @@ class SimulationPlotter:
             sw_src = res.ts["sw_src"]
             sw_sink = res.ts["sw_sink"]
 
-
             for n, data in enumerate(sw_src):
-                axs[ax_idx].plot(time, data,
+                axs[ax_idx].plot(
+                    time,
+                    data,
                     label=f"source, line {n}",
                 )
                 ax_idx += 1
 
             for n, data in enumerate(sw_sink):
-                axs[ax_idx].plot(time, data,
+                axs[ax_idx].plot(
+                    time,
+                    data,
                     label=f"sink, line {n}",
                 )
                 ax_idx += 1
@@ -1242,26 +1204,27 @@ class SimulationPlotter:
 
             for n, (ax, pline) in enumerate(zip(axs, plines)):
                 ax.plot(
-                    time, pline,
+                    time,
+                    pline,
                     label=f"line {n}",
                 )
                 ax.set_ylabel("Voltage (V)")
                 ax.grid()
                 ax.legend()
 
-    def _plot_src_sink_power(self, fig: Figure, results:
-                             list[SimulationResults]):
+    def _plot_src_sink_power(self, fig: Figure, results: list[SimulationResults]):
         axs = fig.subplots(2, 1, sharex=True)
 
         axs[0].set_title("Source/Sink Power")
-
 
         for res in results:
             time = res.ts["time"]
             pwr_src = res.ts["pwr_src"]
             pwr_sink = res.ts["pwr_sink"]
 
-            axs[0].plot(time, pwr_src,
+            axs[0].plot(
+                time,
+                pwr_src,
                 label="src",
             )
             axs[1].plot(
@@ -1279,7 +1242,6 @@ class SimulationPlotter:
             ax.grid()
             ax.legend()
 
-
     def _plot_src_sink_r(self, fig: Figure, results: list[SimulationResults]):
         axs = fig.subplots(2, 1, sharex=True)
 
@@ -1290,7 +1252,9 @@ class SimulationPlotter:
             r_src = res.ts["r_src"]
             r_sink = res.ts["r_sink"]
 
-            axs[0].plot(time, r_src,
+            axs[0].plot(
+                time,
+                r_src,
                 label="src",
             )
             axs[1].plot(
@@ -1298,8 +1262,6 @@ class SimulationPlotter:
                 r_sink,
                 label="sink",
             )
-
-
 
         for ax in axs:
             ax.set_ylabel("Resistance (R)")
@@ -1310,12 +1272,10 @@ class SimulationPlotter:
             ax.grid()
             ax.legend()
 
-
     def _plot_energy(self, fig: Figure, results: list[SimulationResults]):
         axs = fig.subplots(4, 1, sharex=True)
 
         axs[0].set_title("Energy over time")
-
 
         for res in results:
             time = res.ts["time"]
@@ -1336,7 +1296,6 @@ class SimulationPlotter:
         axs[1].set_ylabel("Energy (J)")
         axs[-1].set_xlabel("Time (s)")
 
-
     def _plot_cap_energy(self, fig: Figure, results: list[SimulationResults]):
         # Number of capacitors + total energy
         num_plots = self._max_caps(results) + 1
@@ -1344,20 +1303,17 @@ class SimulationPlotter:
 
         axs[0].set_title("Energy in capacitors")
 
-
         for res in results:
             time = res.ts["time"]
             total_energy_list = res.ts["e_caps"]
             total_energy = res.ts["e_sum_caps"]
 
-            for idx, (cap, energy) in enumerate(zip(res.config.caps, total_energy_list)):
-                axs[idx].plot(
-                    time, energy, label=f"{cap.farads}"
-                )
+            for idx, (cap, energy) in enumerate(
+                zip(res.config.caps, total_energy_list)
+            ):
+                axs[idx].plot(time, energy, label=f"{cap.farads}")
 
-            axs[-1].plot(
-                time, total_energy, label="Total"
-            )
+            axs[-1].plot(time, total_energy, label="Total")
 
         for ax in axs:
             ax.grid()
@@ -1365,7 +1321,6 @@ class SimulationPlotter:
             ax.set_ylabel("Energy (J)")
 
         axs[-1].set_xlabel("Time (s)")
-
 
     def _plot_cap_current(self, fig: Figure, results: list[SimulationResults]):
         num_plots = self._max_caps(results)
@@ -1414,8 +1369,6 @@ class SimulationPlotter:
 
         return cum_energy
 
-
-
     def _max_caps(self, results: list[SimulationResults]) -> int:
         """Calculate the max number of capacitors among results.
 
@@ -1430,7 +1383,6 @@ class SimulationPlotter:
         for res in results:
             num_caps = max(len(res.config.caps), num_caps)
         return num_caps
-
 
     def _max_switches(self, results: list[SimulationResults]) -> int:
         """Calculate the max number of switch lines
@@ -1462,12 +1414,10 @@ class SimulationPlotter:
             max_plines = max(res.config.p_lines, max_plines)
         return max_plines
 
-
     def plot_final(self, results: list[SimulationResults]):
         """Plots the final results from the simulation."""
 
         self._plot_final_energy(self.get_fig("final_energy"), results)
-
 
     def _plot_final_energy(self, fig: Figure, results: list[SimulationResults]):
         # keys in results.ts to plot, in bar order
@@ -1520,7 +1470,6 @@ class SimulationPlotter:
         ax.axhline(0, color="black", linewidth=0.8)  # diff can be negative
         ax.legend()
 
-
     def show(self):
         plt.show(block=False)
         input("Press enter to close figures...")
@@ -1541,10 +1490,6 @@ class SimulationPlotter:
         return
 
 
-
-
-
-
 class CapacitorStorageSim:
     class CustomShared(NgSpiceShared):
         """Class that takes in a callback and updates the current state of the
@@ -1561,8 +1506,18 @@ class CapacitorStorageSim:
         that includes all capacitors.
         """
 
-        def __init__(self, config: CapacitorStorageSimConfig, **kwargs):
-            """Sets the callback function."""
+        def __init__(
+            self,
+            config: CapacitorStorageSimConfig,
+            progress: Callable[[float], None] | None,
+            **kwargs,
+        ):
+            """Sets the callback function.
+
+            Args:
+                config: Simulation configuration
+                progress: Callback function to take progress
+            """
 
             # This line allows for mulitple instantiations of ngspice. See
             # following for source.
@@ -1571,6 +1526,7 @@ class CapacitorStorageSim:
 
             super().__init__(**kwargs)
             self.config = config
+            self.progress = progress
 
         def get_vsrc_data(self, voltage, time, node, ngspice_id):
             self._logger.debug(
@@ -1653,7 +1609,12 @@ class CapacitorStorageSim:
 
             time = data["time"].real
 
+            # uesr defined callback
             self.config.callback(time)
+
+            # progress callback
+            if self.progress:
+                self.progress(time)
 
             # advance to next power timestamp if needed
             self.config.src.next()
@@ -1664,14 +1625,14 @@ class CapacitorStorageSim:
         self,
         config: CapacitorStorageSimConfig,
         plotter: SimulationPlotter | None = None,
-        lock: Lock | None = None,
+        progress: Callable[[float], None] | None = None,
     ):
         """Create a simulation instance with a given configuration.
 
         Args:
             config: Configuration
             plotter: Plotter object
-            lock: Mutex lock for multiprocessing
+            progress: Callback function to take progress
         """
 
         self.config = config
@@ -1682,14 +1643,7 @@ class CapacitorStorageSim:
         else:
             self.plotter = SimulationPlotter()
 
-        # default to an instance of lock
-        if lock:
-            self.lock = lock
-        else:
-            self.lock = Lock()
-
-
-        self.shared = self.CustomShared(config, send_data=True)
+        self.shared = self.CustomShared(config, progress, send_data=True)
 
         # limited min/max resistance for load
         self.load_min_r = 1e-9
@@ -1902,7 +1856,6 @@ class CapacitorStorageSim:
 
         return results
 
-
     def show(self):
         """Helper function to show plots from a simulation."""
 
@@ -1917,17 +1870,16 @@ class CapacitorStorageSim:
 
         self.plotter.plot_single_ts(self.results)
 
-
-        #self.plot_with_lock(self._plot_capacitors, "capacitors", sl=sl)
-        #self.plot_with_lock(self._plot_cap_switches, "cap_switches", sl=sl)
-        #self.plot_with_lock(self._plot_input_output, "input_output", sl=sl)
-        #self.plot_with_lock(self._plot_io_switches, "io_switches", sl=sl)
-        #self.plot_with_lock(self._plot_power_lines, "power_lines", sl=sl)
-        #self.plot_with_lock(self._plot_src_sink_power, "src_sink_power", sl=sl)
-        #self.plot_with_lock(self._plot_src_sink_r, "src_sink_r", sl=sl)
-        #self.plot_with_lock(self._plot_energy, "energy", sl=sl)
-        #self.plot_with_lock(self._plot_cap_energy, "cap_energy", sl=sl)
-        #self.plot_with_lock(self._plot_cap_current, "cap_current", sl=sl)
+        # self.plot_with_lock(self._plot_capacitors, "capacitors", sl=sl)
+        # self.plot_with_lock(self._plot_cap_switches, "cap_switches", sl=sl)
+        # self.plot_with_lock(self._plot_input_output, "input_output", sl=sl)
+        # self.plot_with_lock(self._plot_io_switches, "io_switches", sl=sl)
+        # self.plot_with_lock(self._plot_power_lines, "power_lines", sl=sl)
+        # self.plot_with_lock(self._plot_src_sink_power, "src_sink_power", sl=sl)
+        # self.plot_with_lock(self._plot_src_sink_r, "src_sink_r", sl=sl)
+        # self.plot_with_lock(self._plot_energy, "energy", sl=sl)
+        # self.plot_with_lock(self._plot_cap_energy, "cap_energy", sl=sl)
+        # self.plot_with_lock(self._plot_cap_current, "cap_current", sl=sl)
 
     def plot_time(self, start: float | None = None, end: float | None = None):
         """Plot based on time.
@@ -1971,7 +1923,6 @@ class CapacitorStorageSim:
         else:
             fn(fig, **kwargs)
         self.plotter.set_fig(name, fig)
-
 
     def save(self):
         pass
@@ -2024,45 +1975,94 @@ class SimulationRunner:
         for c in configs:
             pass
 
-    def run(self, end_time: float = 2.0) -> list[SimulationResults]:
+    def run(
+        self,
+        end_time: float = 2.0,
+        progress_bar: bool = True,
+    ) -> list[SimulationResults]:
         """Runs simulations concurrently.
 
         Args:
-            end_time: Duration of simulation.
+            end_time: Duration of simulation
+            progress_bar: Show progress bar
 
         Returns:
             Dictionary containing the results.
         """
 
         with Manager() as m:
+            if progress_bar:
+                q = m.Queue()
 
-            # TODO Add progress bar with thread here
+                # create bars
+                bars = []
+                for idx, cfg in enumerate(self.configs):
+                    bars.append(
+                        tqdm(
+                            total=cfg.src.duration,
+                            desc=cfg.name,
+                            position=idx,
+                            bar_format="{desc}: {percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
+                        )
+                    )
 
-            with Pool(self.nproc) as p:
-                results = p.map(self._run_sim, self.configs)
+                # function to update bars from queue
+                def listener():
+                    while True:
+                        msg = q.get()
+                        # handle sentinel indicating end of process
+                        if msg is None:
+                            break
+                        idx, sim_time = msg
+                        bars[idx].n = min(sim_time, bars[idx].total)
+                        bars[idx].refresh()
 
-            #plotter.show()
+                t = threading.Thread(target=listener, daemon=True)
+                t.start()
+
+            try:
+                with Pool(self.nproc) as p:
+                    params = []
+                    for idx, cfg in enumerate(self.configs):
+                        params.append((idx, cfg, q))
+                    results = p.starmap(self._run_sim, params)
+            finally:
+                if progress_bar:
+                    q.put(None)
+                    t.join()
+                    for b in bars:
+                        b.n = b.total
+                        b.refresh()
+                        b.close()
 
         self.results = results
 
         return results
 
     def _run_sim(
-        self,
-        config: CapacitorStorageSimConfig,
+        self, idx: int, config: CapacitorStorageSimConfig, queue: Queue
     ) -> SimulationResults:
         """Runs a single instance of the simulation.
 
         Args:
+            idx: Simulatoin index
             config: Simulation config
-            plotter: Figures to store plots
-            lock: Mutex lock for multiprocessing
+            queue: Message queue for progress
 
         Returns:
             Final simuliation results.
         """
 
-        sim = CapacitorStorageSim(config)
+        last = -1.0
+        step = config.src.duration / 200
+
+        def progress(time: float):
+            nonlocal last
+            if time - last >= step:
+                last = time
+                queue.put((idx, time))
+
+        sim = CapacitorStorageSim(config, progress=progress)
         result = sim.run()
 
         return result
@@ -2073,7 +2073,6 @@ class SimulationRunner:
 
     def show(self):
         self.plotter.show()
-
 
 
 class SineShared(NgSpiceShared):

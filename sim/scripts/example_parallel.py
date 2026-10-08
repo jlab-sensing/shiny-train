@@ -20,8 +20,6 @@ from sim.models import (
 class MyConfig(CapacitorStorageSimConfig):
     def callback(self, time: float):
 
-        print(f"Simulation time: {time}")
-
         # connect caps
         for cap in self.caps:
             cap.connect(0)
@@ -45,7 +43,7 @@ class MyConfig(CapacitorStorageSimConfig):
 
 
 def create_config(caps: list[Capacitor]):
-    src = ConstantSource(0.1, dt=0.1, duration=30.0, voltage=3.3)
+    src = ConstantSource(0.1, dt=0.1, duration=3600.0, voltage=3.3)
     sink = ConstantSink(0.00001)
     config = MyConfig(src, caps, sink, len(caps))
     return config
@@ -76,6 +74,5 @@ if __name__ == "__main__":
 
     runner = SimulationRunner(configs, names)
     results = runner.run()
-    print(results)
     runner.plot()
     runner.show()
