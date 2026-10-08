@@ -50,6 +50,7 @@ from .models import (
     SineSource,
     BonitoSource,
     SMSink,
+    LeacsCapacitor,
 )
 from .state_machines import Task, init_SinkSM
 

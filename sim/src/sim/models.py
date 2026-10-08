@@ -550,29 +550,23 @@ class BonitoSource(Source):
         self.filename = filename
         self.name = name
 
-        # Open file
-        self.file = h5py.File(filename, "r")
 
         self.offset = offset
         self.duration = duration
         self.downsample = downsample
 
-        # Convert time inputs to indexes
-        dt = (self.file["time"][1] - self.file["time"][0]) * self.downsample
-        self.idx = int(offset / dt)
-        self.max_idx = int(duration / dt) + self.idx
+        with h5py.File(filename, "r") as file:
+            # Convert time inputs to indexes
+            dt = (file["time"][1] - file["time"][0]) * self.downsample
+            self.idx = int(offset / dt)
+            self.max_idx = int(duration / dt) + self.idx
 
-        # Check max index is not out of range of data
-        if self.max_idx > len(self.file["time"]):
-            raise IndexError("Max time exceeds input data.")
+            # Check max index is not out of range of data
+            if self.max_idx > len(file["time"]):
+                raise IndexError("Max time exceeds input data.")
 
         # Initialize the source class
         Source.__init__(self, duration=duration, dt=dt, **kwargs)
-
-    def __del__(self):
-        """Closes the open file."""
-
-        self.file.close()
 
     def get_power(self, time: float):
         """Gets the next power checking against the current sim time
@@ -582,20 +576,21 @@ class BonitoSource(Source):
             time: Simulation time.
         """
 
-        # iterate until we get to the next timestamp
-        # TODO (jmadden173): Can implement some sort of binary search to make
-        # this go after
-        while self.file["time"][self.idx] < time:
-            self.idx += self.downsample
+        with h5py.File(self.filename, "r") as file:
+            # iterate until we get to the next timestamp
+            # TODO (jmadden173): Can implement some sort of binary search to make
+            # this go after
+            while file["time"][self.idx] < time:
+                self.idx += self.downsample
 
-        # check that simulation and data class are synced
-        # sim_time = (self.file["time"][self.idx] - self.offset)
-        # dt = sim_time - time
-        # if abs(dt) >= self.dt:
-        #    raise RuntimeError(f"Simulation ({sim_time}) and data timestamp ({time}) is not synced.")
+            # check that simulation and data class are synced
+            # sim_time = (self.file["time"][self.idx] - self.offset)
+            # dt = sim_time - time
+            # if abs(dt) >= self.dt:
+            #    raise RuntimeError(f"Simulation ({sim_time}) and data timestamp ({time}) is not synced.")
 
-        # get power from file
-        power = self.file["data"][self.name][self.idx]
+            # get power from file
+            power = file["data"][self.name][self.idx]
         return power
 
 
