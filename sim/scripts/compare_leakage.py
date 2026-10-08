@@ -3,11 +3,13 @@
 """Compare the total leakage energy of various models of capacitors"""
 
 from sim.models import (
-    CapacitorStorageSim,
+    Capacitor,
     CapacitorStorageSimConfig,
     ConstantSink,
     ConstantSource,
     CVCapacitor,
+    IdealCapacitor,
+    SimulationRunner,
 )
 
 
@@ -34,9 +36,14 @@ class TestCapacitor(CapacitorStorageSimConfig):
                 cap.reset()
 
 
-if __name__ == "__main__":
+def create_config(caps: list[Capacitor]):
     src = ConstantSource(1, duration=3600, dt=1)
+    sink = ConstantSink(0.1)
+    config = TestCapacitor(src, caps, sink, 2)
+    return config
 
+
+if __name__ == "__main__":
     values = [
         100e-6,
         150e-6,
@@ -47,18 +54,27 @@ if __name__ == "__main__":
         1e-3,
     ]
 
-    # list of capacitors to evaluate, first one is baseline
-    caps = [CVCapacitor(f) for f in values]
+    ideal_caps = [IdealCapacitor(c) for c in values]
+    ideal_config = create_config(ideal_caps)
 
-    sink = ConstantSink(0.1)
+    cv_caps = [CVCapacitor(c) for c in values]
+    cv_config = create_config(cv_caps)
 
-    config = TestCapacitor(src, caps, sink, 2)
+    #
+    # Runner
+    #
 
-    sim = CapacitorStorageSim(config)
+    configs = [
+        ideal_config,
+        cv_config,
+    ]
 
-    sim.run()
+    names = [
+        "Ideal",
+        "CV Capacitor",
+    ]
 
-    print(sim.circuit)
-    sim.plot()
-    # sim.plot_time(0., 10.)
-    # sim.plot_time(20.0)
+    runner = SimulationRunner(configs, names)
+    results = runner.run()
+    runner.plot()
+    runner.show()
