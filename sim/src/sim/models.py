@@ -880,7 +880,7 @@ class SimulationResults:
         self.ts["r_sink"] = np.asarray(analysis["v_r_sink"])
 
         self.ts["e_src"] = self._get_src_energy(analysis)
-        self.ts["e_sink"] = self._get_src_energy(analysis)
+        self.ts["e_sink"] = self._get_sink_energy(analysis)
         self.ts["e_diff"] = self._get_diff_energy(analysis)
         self.ts["e_sum_caps"] = self._get_sum_cap_energy(analysis)
 
@@ -904,9 +904,17 @@ class SimulationResults:
             Cumulative sum of energy at each timestep.
         """
 
-        energy = cumulative_trapezoid(
-            analysis["v_pwr_source"], analysis.time, initial=0
-        )
+        # from input power
+        # energy = cumulative_trapezoid(
+        #    analysis["v_pwr_source"], analysis.time, initial=0
+        # )
+
+        # from actual power floating through the load
+        time = analysis.time
+        voltage = analysis["src"]
+        current = analysis["@br1[i]"]
+        power = voltage * current
+        energy = cumulative_trapezoid(power, time, initial=0)
 
         return np.asarray(energy)
 
@@ -918,6 +926,13 @@ class SimulationResults:
         """
 
         energy = cumulative_trapezoid(analysis["v_pwr_sink"], analysis.time, initial=0)
+
+        # actual power flowing through the load
+        time = analysis.time
+        voltage = analysis["sink"]
+        current = analysis["@br2[i]"]
+        power = voltage * current
+        energy = cumulative_trapezoid(power, time, initial=0)
 
         return np.asarray(energy)
 
@@ -942,7 +957,9 @@ class SimulationResults:
         energy_list = []
         for idx, cap in enumerate(self.config.caps):
             # calculate energy from 1/2 C V^2
-            energy = 0.5 * cap.farads * (analysis[f"c{idx}_pos"] ** 2)
+            # ORDER matters here, see the following
+            # https://github.com/jlab-sensing/shiny-train/pull/35#issuecomment-6066922555
+            energy = (analysis[f"c{idx}_pos"] ** 2) * cap.farads * 0.5
             energy_list.append(energy)
 
         return energy_list
