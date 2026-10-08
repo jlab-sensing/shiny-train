@@ -78,3 +78,4 @@ if __name__ == "__main__":
     results = runner.run()
     print(results)
     runner.plot()
+    runner.show()
