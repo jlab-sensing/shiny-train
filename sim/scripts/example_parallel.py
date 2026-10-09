@@ -2,7 +2,7 @@
 
 """Example showing multiple simulation runs in parallel.
 
-Deep copy with the `copy` module did not with the class inheritence
+Deep copy with the `copy` module did not with the class inheritance
 configuration. We recommend creating a function to return a specific
 configuration based on parameters as shown here.
 """
@@ -13,6 +13,7 @@ from sim.models import (
     ConstantSink,
     ConstantSource,
     CVCapacitor,
+    IdealCapacitor,
     SimulationRunner,
 )
 
@@ -52,11 +53,13 @@ def create_config(caps: list[Capacitor]):
 if __name__ == "__main__":
     cap_values = [10e-6, 47e-6, 100e-6]
 
-    ideal_caps = [CVCapacitor(c) for c in cap_values]
+    ideal_caps = [IdealCapacitor(c) for c in cap_values]
     ideal_config = create_config(ideal_caps)
+    ideal_config.name = "Ideal"
 
     cv_caps = [CVCapacitor(c) for c in cap_values]
     cv_config = create_config(cv_caps)
+    cv_config.name = "Leaky"
 
     #
     # Runner
@@ -67,12 +70,7 @@ if __name__ == "__main__":
         cv_config,
     ]
 
-    names = [
-        "Ideal",
-        "CV Capacitor",
-    ]
-
-    runner = SimulationRunner(configs, names)
+    runner = SimulationRunner(configs)
     results = runner.run()
     runner.plot()
     runner.show()
