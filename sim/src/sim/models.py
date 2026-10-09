@@ -14,6 +14,8 @@ from multiprocessing import Manager, Pool
 from queue import Queue
 
 import h5py
+# import matplotlib
+# matplotlib.use('QtAgg')
 import matplotlib.pyplot as plt
 import numpy as np
 import PySpice
@@ -1924,22 +1926,22 @@ class CapacitorStorageSim:
 
         self.plot(slice(start_idx, end_idx))
 
-    def plot_with_lock(self, fn: Callable[Figure, slice], name: str, **kwargs):
-        """Calls a plotting function with a mutex lock.
-
-        Args:
-            fn: Plotting function.
-            name: Name of the plot.
-            **kwargs: Passed to fn.
-        """
-
-        fig = self.plotter.get_fig(name)
-        if self.lock:
-            with self.lock:
-                fn(fig, **kwargs)
-        else:
-            fn(fig, **kwargs)
-        self.plotter.set_fig(name, fig)
+    # def plot_with_lock(self, fn: Callable[Figure, slice], name: str, **kwargs):
+    #     """Calls a plotting function with a mutex lock.
+    #
+    #     Args:
+    #         fn: Plotting function.
+    #         name: Name of the plot.
+    #         **kwargs: Passed to fn.
+    #     """
+    #
+    #     fig = self.plotter.get_fig(name)
+    #     if self.lock:
+    #         with self.lock:
+    #             fn(fig, **kwargs)
+    #     else:
+    #         fn(fig, **kwargs)
+    #     self.plotter.set_fig(name, fig)
 
     def save(self):
         pass
