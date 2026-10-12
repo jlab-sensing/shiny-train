@@ -164,7 +164,7 @@ class MATRSinkSM(StateChart):
         h = HistoryState(type="deep")
 
     sleep = State("sleep", initial=True, value=4.64e-4 * DC_VOLTS)
-    replan = State("replan", value=4.64e-4 * DC_VOLTS)
+    # replan = State("replan", value=4.64e-4 * DC_VOLTS)
 
     # Self-transitions while executing, advance when done
     cycle = (
@@ -183,8 +183,8 @@ class MATRSinkSM(StateChart):
     pause = task.to(sleep)
     wake = sleep.to(task.measure, cond="no_history") | sleep.to(task.h)
 
-    plan = task.to(replan)
-    resume = replan.to(task.measure, cond="no_history") | replan.to(task.h)
+    # plan = task.to(replan)
+    # resume = replan.to(task.measure, cond="no_history") | replan.to(task.h)
 
     def _get_task_state_id(self):
         for state in self.configuration:

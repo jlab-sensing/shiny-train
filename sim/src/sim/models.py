@@ -112,7 +112,7 @@ class BaseCapacitor(SwitchedComponent):
     """
 
     farads: float
-    v_min: float = 0.2
+    v_min: float = 0.8
     v_max: float = 3.2
     _leakage: float = 3e-6
     initial_voltage: float = 0.0
@@ -664,10 +664,13 @@ class SMSink(Sink):
         Sink.__init__(self, **kwargs)
 
     def run_sm(self):
+        # print('cycle:', self.sm.charged())
         self.sm.send("cycle")
 
         current_id = self.sm._get_current_state_id()
+        # print(current_id)
         if current_id == "sleep" and self.sm.charged():
+            # print('wake')
             # energy = self.sm.cap.energy
             # min_energy = self.sm.cap.min_energy
             # projected_energy = energy + self.sm.load_value * self.sm.remaining_time

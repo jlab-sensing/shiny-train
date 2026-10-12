@@ -11,6 +11,7 @@ import time
 
 from sim.callback import LeacSimConfig
 from sim.models import (
+    ConstantSource,
     BonitoSource,
     Capacitor,
     CVCapacitor,
@@ -23,17 +24,23 @@ from sim.state_machines import Task, init_MATRSinkSM
 
 def create_config(caps: list[Capacitor]):
     M = 2
-    CONST_VOLTAGE = 3.3
+    CONST_VOLTAGE = 3.2
+
+    # src = ConstantSource(
+    #     1.5,
+    #     duration=1,
+    #     dt=0.01,
+    # )
 
     src = BonitoSource(
         "/home/mwmaster/catch/pwr_cars.h5",
-        duration=3600,
+        duration=800,
         downsample=30000,
     )
 
     tasks = [  # bookkeeping for LeacSimConfig; SMSink is hardcoded with identical Tasks
         Task(cost=11.68e-4 * CONST_VOLTAGE, duration=0.511, name="measure"),
-        Task(cost=2 * 11.68e-4 * CONST_VOLTAGE, duration=0.511, name="measure"),
+        Task(cost=2 * 11.68e-4 * CONST_VOLTAGE, duration=0.511, name="analyze"),
         Task(cost=86.52e-4 * CONST_VOLTAGE, duration=0.285, name="tx"),
         Task(cost=20.03e-4 * CONST_VOLTAGE, duration=0.937, name="rx"),
     ]
@@ -78,7 +85,7 @@ if __name__ == "__main__":
 
     runner = SimulationRunner(configs)
     start = time.time()
-    results = runner.run()
+    results = runner.run(progress_bar=True)
     print(f"runtime: {time.time() - start}")
     runner.plot()
     runner.show()
