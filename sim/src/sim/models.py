@@ -112,8 +112,8 @@ class BaseCapacitor(SwitchedComponent):
     """
 
     farads: float
-    v_min: float = 1.6
-    v_max: float = 3.3
+    v_min: float = 0.2
+    v_max: float = 3.2
     _leakage: float = 3e-6
     initial_voltage: float = 0.0
     voltage: float = 0.0
@@ -592,7 +592,7 @@ class BonitoSource(Source):
 
             # get power from file
             power = file["data"][self.name][self.idx]
-        return power
+        return power*64
 
 
 class Sink(SwitchedComponent):

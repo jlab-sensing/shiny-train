@@ -18,7 +18,7 @@ from sim.models import (
     SimulationRunner,
     SMSink,
 )
-from sim.state_machines import Task, init_SinkSM
+from sim.state_machines import Task, init_MATRSinkSM
 
 
 def create_config(caps: list[Capacitor]):
@@ -26,33 +26,19 @@ def create_config(caps: list[Capacitor]):
     CONST_VOLTAGE = 3.3
 
     src = BonitoSource(
-        "/home/jtmadden/repos/jlab/shiny-train/sim/data/bonito/pwr_cars.h5",
+        "/home/mwmaster/catch/pwr_cars.h5",
         duration=3600,
         downsample=30000,
     )
 
-    # src = ConstantSource(
-    #     1,
-    #     duration=2,
-    #     dt=0.01,
-    # )
-
-    # src = SineSource(
-    #     1.70e-2,
-    #     1.70e-2,
-    #     2.00,
-    #     0.00,
-    #     duration=100,
-    #     dt=0.01,
-    # )
-
     tasks = [  # bookkeeping for LeacSimConfig; SMSink is hardcoded with identical Tasks
         Task(cost=11.68e-4 * CONST_VOLTAGE, duration=0.511, name="measure"),
+        Task(cost=2 * 11.68e-4 * CONST_VOLTAGE, duration=0.511, name="measure"),
         Task(cost=86.52e-4 * CONST_VOLTAGE, duration=0.285, name="tx"),
         Task(cost=20.03e-4 * CONST_VOLTAGE, duration=0.937, name="rx"),
     ]
 
-    sink = SMSink(init_SinkSM(caps[0]))
+    sink = SMSink(init_MATRSinkSM(caps[0], testing=False))
 
     config = LeacSimConfig(
         src,

@@ -51,9 +51,9 @@ from .models import (
     LeacsCapacitor,
     SMSink,
 )
-from .state_machines import Task, init_SinkSM
+from .state_machines import Task, init_MTRSinkSM
 
-_TASK_IDX = {"measure": 0, "tx": 1, "rx": 2}
+_TASK_IDX = {"measure": 0, "analyze": 1, "tx": 2, "rx": 3}
 
 
 @dataclass
@@ -890,8 +890,10 @@ class TaskAssigner:
         time,
         floor=3e-6,
     ):
-        leakage = [c.leakage for c in self.caps]
-
+        # c.leakage is current -> p = IV = 0.01*C*V^2
+        # c.energy = 0.5 * v**2 * c
+        #   ==> p_leak = 0.01 C * V**2 = c.energy / 0.01 / 2
+        leakage = [c.leakage * c.voltage for c in self.caps]
         energy_costs = [t.cost * t.duration for t in self.tasks]
 
         model = build_model(
@@ -1128,7 +1130,7 @@ if __name__ == "__main__":
         Task(cost=20.03e-4 * CONST_VOLTAGE, duration=0.937, name="rx"),
     ]
 
-    sink = SMSink(init_SinkSM(caps[0]))
+    sink = SMSink(init_MTRSinkSM(caps[0]))
 
     config = LeacSimConfig(
         src,

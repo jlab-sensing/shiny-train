@@ -2,6 +2,7 @@ import warnings
 from dataclasses import dataclass
 
 from statemachine import HistoryState, State, StateChart
+import numpy as np
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -32,7 +33,7 @@ class Task:
     name: str
 
 
-class SinkSM(StateChart):
+class MTRSinkSM(StateChart):
     cap = None
     time = None
     task_start = 0.0
@@ -137,7 +138,149 @@ class SinkSM(StateChart):
             print(f"unexpected source.id: {source.id}")
 
 
-class TestSinkSM(SinkSM):
+class MATRSinkSM(StateChart):
+    cap = None
+    time = None
+    rng = np.random.default_rng()
+    task_start = 0.0
+    remaining_time = 0.0
+    load_value = 4.64e-3 * DC_VOLTS  # OUTPUT: the energy consumption for next timestep
+
+    class task(State.Compound):
+        measure = State(
+            "measure",
+            value=Task(cost=11.68e-4 * DC_VOLTS, duration=0.511, name="measure"),
+        )
+        analyze = State(
+            "analyze",
+            value=Task(cost=2*11.68e-4 * DC_VOLTS, duration=0.511, name="analyze"),
+        )
+        tx = State(
+            "tx", value=Task(cost=86.52e-4 * DC_VOLTS, duration=0.285, name="tx")
+        )
+        rx = State(
+            "rx", value=Task(cost=20.03e-4 * DC_VOLTS, duration=0.927, name="rx")
+        )
+        h = HistoryState(type="deep")
+
+    sleep = State("sleep", initial=True, value=4.64e-4 * DC_VOLTS)
+    replan = State("replan", value=4.64e-4 * DC_VOLTS)
+
+    # Self-transitions while executing, advance when done
+    cycle = (
+        task.measure.to.itself(cond="executing")
+        | task.measure.to(task.analyze)
+        | task.analyze.to.itself(cond="executing")
+        | task.analyze.to(task.tx, cond="analyze_pass")
+        | task.analyze.to(task.measure)  # analyze fail
+        | task.tx.to.itself(cond="executing")
+        | task.tx.to(task.rx)
+        | task.rx.to.itself(cond="executing")
+        | task.rx.to(task.measure, cond="rx_pass")
+        | task.rx.to(task.tx)  # rx fail
+    )
+
+    pause = task.to(sleep)
+    wake = sleep.to(task.measure, cond="no_history") | sleep.to(task.h)
+
+    plan = task.to(replan)
+    resume = replan.to(task.measure, cond="no_history") | replan.to(task.h)
+
+    def _get_task_state_id(self):
+        for state in self.configuration:
+            if (
+                state.is_active
+                and hasattr(state, "value")
+                and isinstance(state.value, Task)
+            ):
+                return state.id
+        return None
+
+    def _get_current_state_id(self):
+        for state in self.configuration:
+            if state.is_active:
+                return state.id
+        return None
+
+    def on_enter_measure(self, target, source=None, **kwargs):
+        if source is None or source.id != "measure":
+            # print(f"{time:.6f}:    Exiting {source.id} and entering {target.id}")
+            self.task_start = self.time
+            self.load_value = target.value.cost
+
+    def on_enter_analyze(self, target, source=None, **kwargs):
+                if source is None or source.id != "analyze":
+                    # print(f"{time:.6f}:    Exiting {source.id} and entering {target.id}")
+                    self.task_start = self.time
+                    self.load_value = target.value.cost
+
+    def on_enter_tx(self, target, source=None, **kwargs):
+        if source is None or source.id != "tx":
+            # print(f"{time:.6f}:    Exiting {source.id} and entering {target.id}")
+            self.task_start = self.time
+            self.load_value = target.value.cost
+
+    def on_enter_rx(self, target, source=None, **kwargs):
+        if source is None or source.id != "rx":
+            # print(f"{time:.6f}:    Exiting {source.id} and entering {target.id}")
+            self.task_start = self.time
+            self.load_value = target.value.cost
+
+    def on_enter_sleep(self, target, source=None):
+        if source is None or source.id != "sleep":
+            # print(f"{time:.6f}:    Exiting {source.id} and entering {target.id}")
+            self.task_start = self.time
+            self.load_value = 0.0
+
+    def on_enter_replan(self, target, source=None):
+        if source is None or source.id != "replan":
+            # print(f"{time:.6f}:    Exiting {source.id} and entering {target.id}")
+            self.task_start = self.time
+            self.load_value = 0.0
+
+    def executing(self, source=None, **kwargs):
+        if source and hasattr(source, "value") and isinstance(source.value, Task):
+            return (self.time - self.task_start) < source.value.duration
+        return False  # fallback default
+
+    def analyze_pass(self, n=1.960, **kwargs):  # 95% chance of failure
+        if np.abs(self.rng.standard_normal()) >= n:
+            return True
+        else:
+            return False
+
+    def rx_pass(self, n=0.025, **kwargs):  # 2% chance of failure
+        if np.abs(self.rng.standard_normal()) >= n:
+            return True
+        else:
+            return False
+
+    def charged(self):
+        return self.cap.voltage >= self.cap.v_max
+
+    def recharging(self):
+        return self.cap.voltage < self.cap.v_max
+
+    def no_history(self):
+        return self.history_values == {}
+
+    def on_cycle(self, source=None, target=None, **kwargs):
+        if source and hasattr(source, "value") and isinstance(source.value, Task):
+            task = source.value
+            energy = self.cap.energy
+            min_energy = self.cap.min_energy
+            self.remaining_time = task.duration - self.time + self.task_start
+            projected_energy = energy + task.cost * self.remaining_time
+
+            if projected_energy <= min_energy:
+                self.raise_("pause")
+            else:
+                pass
+        else:
+            print(f"unexpected source.id: {source.id}")
+
+
+class TestSinkSM(MTRSinkSM):
     def recharging(self):
         new_v = ((self.cap.energy + 5e-3 * 0.05) * 2 / self.cap.farads) ** 0.5
 
@@ -160,11 +303,22 @@ class TestSinkSM(SinkSM):
                 ) ** 0.5
 
 
-def init_SinkSM(cap, testing=True):
+def init_MTRSinkSM(cap, testing=True):
     if testing:
         sm = TestSinkSM()
     else:
-        sm = SinkSM()
+        sm = MTRSinkSM()
+    sm.cap = cap
+    sm.task_start = 0.0
+    sm.time = 0.0
+    return sm
+
+
+def init_MATRSinkSM(cap, testing=True):
+    if testing:
+        sm = TestSinkSM()
+    else:
+        sm = MATRSinkSM()
     sm.cap = cap
     sm.task_start = 0.0
     sm.time = 0.0
