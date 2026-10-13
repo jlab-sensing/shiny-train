@@ -519,7 +519,8 @@ class SineSource(Source):
 class BonitoSource(Source):
     def __init__(
         self,
-        filename: str,
+        filename: str = "",
+        datapath: str = "",
         name: str = "node0",
         offset: float = 0,
         duration: float = 0,
@@ -537,8 +538,11 @@ class BonitoSource(Source):
         Passing kwargs "dt" and "duration" override calculated values from the
         dataset. DO NOT do unless you know what you're doing.
 
+        Filename defaults to `pwr_cars.h5`. Datapath defaults to `data/bonito/`
+
         Args:
-            file: Path to h5 data file.
+            filename: Path to h5 data file.
+            datapath: Path to data sources.
             name: Name of the node.
             offset: Dataset time at start of simulation.
             duration: Time to run simulation from offset.
@@ -549,14 +553,31 @@ class BonitoSource(Source):
             time for the given dataset.
         """
 
-        self.filename = filename
+
+        if datapath:
+            if os.path.exists(datapath):
+                self.datapath = datapath
+            else:
+                raise FileNotFoundError(f"Folder {datapath} does not exsits.")
+        else:
+            this_dir = os.path.dirname(os.path.abspath(__file__))
+            module_dir = os.path.join(this_dir, "..", "..")
+            self.datapath = os.path.join(module_dir, "data", "bonito")
+
+        if filename:
+            self.filename = filename
+        else:
+            self.filename = "pwr_cars.h5"
+
+        self.fullpath = os.path.join(self.datapath, self.filename)
+
         self.name = name
 
         self.offset = offset
         self.duration = duration
         self.downsample = downsample
 
-        with h5py.File(filename, "r") as file:
+        with h5py.File(self.fullpath, "r") as file:
             # Convert time inputs to indexes
             dt = (file["time"][1] - file["time"][0]) * self.downsample
             self.idx = int(offset / dt)
@@ -577,7 +598,7 @@ class BonitoSource(Source):
             time: Simulation time.
         """
 
-        with h5py.File(self.filename, "r") as file:
+        with h5py.File(self.fullpath, "r") as file:
             # iterate until we get to the next timestamp
             # TODO (jmadden173): Can implement some sort of binary search to make
             # this go after
