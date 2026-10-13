@@ -1974,6 +1974,103 @@ class CapacitorStorageSim:
         pass
 
 
+
+def create_caps_list(
+    model: Callable,
+    values: list[float],
+) -> list[Capacitor]:
+    """Create a list of capacitors objects based on values.
+
+    Args:
+        models: Capacitor model
+        values: List of farads
+
+    Returns:
+        List of capacitor objects
+    """
+
+    return [model(c) for c in values]
+
+
+def simulation_config_matrix(
+    cap_classes: list[Callable],
+    cap_farads: list[list[float]] | list[float],
+    src_classes: list[Callable],
+    src_kwargs: list[dict] | dict,
+    sink_classes: list[Callable],
+    sink_kwargs: list[dict] | dict,
+    config_classes: list[Callable],
+    config_kwargs: list[dict] | dict,
+    cap_kwargs: list[dict] | dict | None = None,
+) -> list[CapacitorStorageSimConfig]:
+    """Returns a matrix of configurations.
+
+    Arguments caps, sources, and sink all must be separate objects and cannot
+    share memory.
+
+    All non-class arguments are made as single or list arguments. If a single
+    kwargs list is passed, then all the models are created with those
+    arguments. Otherwise, for example, different config_classes require
+    different kwargs, you can specify per object.
+
+    Args:
+        cap_classes: List of capacitor classes
+        cap_farads: List of farads for each simulation
+        cap_kwargs: kwargs to pass to the constructor
+        src_classes: List of source classes
+        src_kwargs: kwargs to pass to the contructor
+        sink_classes: List of sink classes
+        sink_kwargs: kwargs to pass to the contructor
+        config_classes: List of config classes
+        config_kwargs: kwargs to pass to the constructor
+
+    Returns:
+        List of configuration objects without any shared memory.
+
+    """
+
+    if not cap_kwargs:
+        cap_kwargs = {}
+    if isinstance(cap_kwargs, dict):
+        cap_kwargs = [cap_kwargs for _ in cap_classes]
+
+    if isinstance(cap_farads[0], float):
+        cap_farads = [cap_farads for _ in cap_classes]
+
+    if isinstance(src_kwargs, dict):
+        src_kwargs = [src_kwargs for _ in src_classes]
+
+    if isinstance(sink_kwargs, dict):
+        sink_kwargs = [sink_kwargs for _ in sink_classes]
+
+    if isinstance(config_kwargs, dict):
+        config_kwargs = [config_kwargs for _ in config_classes]
+
+    config_objs = []
+    for cap_class, c_kwargs in zip(cap_classes, cap_kwargs):
+        for c_farads in cap_farads:
+            for src_class, sr_kwargs in zip(src_classes, src_kwargs):
+                for sink_class, si_kwargs in zip(sink_classes, sink_kwargs):
+                    for cfg_class, cfg_kwargs in zip(config_classes, config_kwargs):
+
+                        caps = [cap_class(f, **c_kwargs) for f in c_farads]
+                        src = src_class(**sr_kwargs)
+                        sink = sink_class(**si_kwargs)
+
+                        config_objs.append(
+                            cfg_class(
+                                src=src,
+                                caps=caps,
+                                sink=sink,
+                                **cfg_kwargs
+                            )
+                        )
+
+    return config_objs
+
+
+
+
 class SimulationRunner:
     """Runs one or more instances of CapacitorStorageSim"""
 

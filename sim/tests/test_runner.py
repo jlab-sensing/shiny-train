@@ -10,6 +10,7 @@ from sim.models import (
     CVCapacitor,
     IdealCapacitor,
     SimulationRunner,
+    simulation_config_matrix,
 )
 
 
@@ -72,6 +73,26 @@ class TestRunner(unittest.TestCase):
 
     def test_runner_no_progress_bar(self):
         configs = create_runner_configs()
+        runner = SimulationRunner(configs)
+        runner.run(progress_bar=False)
+        runner.plot()
+
+        self.assertTrue(True)
+
+    def test_simulation_config_matrix(self):
+        configs = simulation_config_matrix(
+            [IdealCapacitor, CVCapacitor],
+            [[10e-6, 47e-6, 100e-6], [22e-6, 47e-6, 330e-6]],
+            [ConstantSource],
+            {"power": 0.1, "dt": 0.1, "duration": 60.0, "voltage": 3.3},
+            [ConstantSink],
+            {"power": 0.1},
+            [MyConfig],
+            {"p_lines": 2}
+        )
+
+        self.assertEqual(4, len(configs))
+
         runner = SimulationRunner(configs)
         runner.run(progress_bar=False)
         runner.plot()
