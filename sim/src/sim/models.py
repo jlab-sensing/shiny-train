@@ -112,7 +112,7 @@ class BaseCapacitor(SwitchedComponent):
     """
 
     farads: float
-    v_min: float = 0.8
+    v_min: float = 1.7
     v_max: float = 3.2
     _leakage: float = 3e-6
     initial_voltage: float = 0.0
@@ -825,7 +825,27 @@ class SimulationResults:
         else:
             self.ts = {}
 
-        self.config = config
+        self._parse_config(config)
+
+
+    def _parse_config(self, config: CapacitorStorageSimConfig | None = None):
+        """Stores attributes from config to ensure objects are picklable.
+
+        Args:
+            config: Simulation config
+        """
+
+        if config:
+            self.caps = config.caps
+            self.p_lines = config.p_lines
+            self.farads = config.farads()
+            self.name = config.name
+        else:
+            self.caps = []
+            self.p_lines = 0
+            self.farads = []
+            self.name = ""
+
 
     def get_slice(self) -> "SimulationResults":
         """Get a slice of the results.
@@ -857,40 +877,38 @@ class SimulationResults:
             config: Simulation config.
         """
 
-        # save config if specified
-        if config:
-            self.config = config
+        self._parse_config(config)
 
         self.ts = {}
 
         self.ts["time"] = np.asarray(analysis.time)
 
         self.ts["capacitors"] = []
-        for idx, cap in enumerate(self.config.caps):
+        for idx, cap in enumerate(self.caps):
             self.ts["capacitors"].append(np.asarray(analysis[f"c{idx}_pos"]))
 
         # first index is capacitors, second index is power lines
         self.ts["cap_switches"] = []
-        for idx, cap in enumerate(self.config.caps):
+        for idx, cap in enumerate(self.caps):
             self.ts["cap_switches"].append([])
-            for line in range(self.config.p_lines):
+            for line in range(self.p_lines):
                 self.ts["cap_switches"][idx].append(
                     np.asarray(analysis[f"ctrl_pwr{line}_c{idx}_pos"])
                 )
 
-        self.ts["v_src"] = analysis["src"]
-        self.ts["v_sink"] = analysis["sink"]
+        self.ts["v_src"] = np.asarray(analysis["src"])
+        self.ts["v_sink"] = np.asarray(analysis["sink"])
 
         self.ts["sw_src"] = []
-        for n in range(self.config.p_lines):
+        for n in range(self.p_lines):
             self.ts["sw_src"].append(np.asarray(analysis[f"ctrl_src_pwr{n}_pos"]))
 
         self.ts["sw_sink"] = []
-        for n in range(self.config.p_lines):
+        for n in range(self.p_lines):
             self.ts["sw_sink"].append(np.asarray(analysis[f"ctrl_pwr{n}_sink_pos"]))
 
         self.ts["plines"] = []
-        for n in range(self.config.p_lines):
+        for n in range(self.p_lines):
             self.ts["plines"].append(np.asarray(analysis[f"pwr{n}"]))
 
         self.ts["pwr_src"] = np.asarray(analysis["v_pwr_source"])
@@ -908,7 +926,7 @@ class SimulationResults:
         self.ts["e_caps"] = self._get_cap_energy(analysis)
 
         self.ts["cap_current"] = []
-        for idx, _ in enumerate(self.config.caps):
+        for idx, _ in enumerate(self.caps):
             self.ts["cap_current"].append(np.asarray(analysis[f"v_sense_{idx}"]))
 
         # Save final energies
@@ -975,12 +993,12 @@ class SimulationResults:
 
         # energy in capacitors
         energy_list = []
-        for idx, cap in enumerate(self.config.caps):
+        for idx, cap in enumerate(self.caps):
             # calculate energy from 1/2 C V^2
             # ORDER matters here, see the following
             # https://github.com/jlab-sensing/shiny-train/pull/35#issuecomment-6066922555
             energy = (analysis[f"c{idx}_pos"] ** 2) * cap.farads * 0.5
-            energy_list.append(energy)
+            energy_list.append(np.asarray(energy))
 
         return energy_list
 
@@ -1120,7 +1138,7 @@ class SimulationPlotter:
         for res in results:
             # mapping to data
             time = res.ts["time"]
-            farads = res.config.farads()
+            farads = res.farads
             voltages = res.ts["capacitors"]
 
             for idx, (farad, voltage) in enumerate(zip(farads, voltages)):
@@ -1147,7 +1165,7 @@ class SimulationPlotter:
         for res in results:
             # mapping to data
             time = res.ts["time"]
-            caps = res.config.caps
+            caps = res.caps
             switches = res.ts["cap_switches"]
 
             row = 0
@@ -1348,7 +1366,7 @@ class SimulationPlotter:
             total_energy = res.ts["e_sum_caps"]
 
             for idx, (cap, energy) in enumerate(
-                zip(res.config.caps, total_energy_list)
+                zip(res.caps, total_energy_list)
             ):
                 axs[idx].plot(time, energy, label=f"{cap.farads}")
 
@@ -1372,7 +1390,7 @@ class SimulationPlotter:
             time = res.ts["time"]
             current = res.ts["cap_current"]
 
-            for idx, (cap, curr) in enumerate(zip(res.config.caps, current)):
+            for idx, (cap, curr) in enumerate(zip(res.caps, current)):
                 # Voltage plot (column 0)
                 axs[idx].plot(
                     time,
@@ -1420,7 +1438,7 @@ class SimulationPlotter:
 
         num_caps = 0
         for res in results:
-            num_caps = max(len(res.config.caps), num_caps)
+            num_caps = max(len(res.caps), num_caps)
         return num_caps
 
     def _max_switches(self, results: list[SimulationResults]) -> int:
@@ -1435,7 +1453,7 @@ class SimulationPlotter:
 
         max_sw = 0
         for res in results:
-            max_sw = max(res.config.p_lines * len(res.config.caps), max_sw)
+            max_sw = max(res.p_lines * len(res.caps), max_sw)
         return max_sw
 
     def _max_plines(self, results: list[SimulationResults]) -> int:
@@ -1450,7 +1468,7 @@ class SimulationPlotter:
 
         max_plines = 0
         for res in results:
-            max_plines = max(res.config.p_lines, max_plines)
+            max_plines = max(res.p_lines, max_plines)
         return max_plines
 
     def plot_final(self, results: list[SimulationResults]):
@@ -1464,7 +1482,7 @@ class SimulationPlotter:
         n_groups = len(results)
         n_bars = len(keys)
 
-        names = [res.config.name for res in results]
+        names = [res.name for res in results]
 
         # Okabe-Ito palette: designed to be distinguishable under the
         # common forms of color vision deficiency
@@ -2070,7 +2088,7 @@ class SimulationRunner:
         """Runs a single instance of the simulation.
 
         Args:
-            idx: Simulatoin index
+            idx: Simulation index
             config: Simulation config
             queue: Message queue for progress
 
