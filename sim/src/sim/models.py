@@ -1246,8 +1246,10 @@ class SimulationPlotter:
                     label=f"line {n}",
                 )
                 ax.set_ylabel("Voltage (V)")
-                ax.grid()
-                ax.legend()
+
+        for ax in axs:
+            ax.grid()
+            ax.legend()
 
     def _plot_src_sink_power(self, fig: Figure, results: list[SimulationResults]):
         axs = fig.subplots(2, 1, sharex=True)
