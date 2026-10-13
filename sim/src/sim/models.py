@@ -1993,9 +1993,9 @@ class SimulationRunner:
         """
 
         with Manager() as m:
-            if progress_bar:
-                q = m.Queue()
+            q = m.Queue()
 
+            if progress_bar:
                 # create bars
                 bars = []
                 for idx, cfg in enumerate(self.configs):
