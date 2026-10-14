@@ -935,6 +935,7 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         plines,
         tasks,
         cap_limit,
+        initial_cap_idx,
     ):
         super().__init__(
             src,
@@ -945,7 +946,11 @@ class LeacSimConfig(CapacitorStorageSimConfig):
 
         self.cap_limit = cap_limit
 
+        # set initial sm params
         self.sm = self.sink.sm
+        self.sm.cap = caps[initial_cap_idx]
+        self.sm.task_start = 0.0
+        self.sm.time = 0.0
 
         self.assignment = None
 

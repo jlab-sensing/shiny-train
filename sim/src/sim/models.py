@@ -4,6 +4,7 @@ Ideally every model would implement a input and output source such that they
 can be controlled from outside the original function.
 """
 
+import copy
 import math
 import os
 import threading
@@ -2053,8 +2054,11 @@ def simulation_config_matrix(
                 for sink_class, si_kwargs in zip(sink_classes, sink_kwargs):
                     for cfg_class, cfg_kwargs in zip(config_classes, config_kwargs):
 
-                        print(cap_class, c_farads, src_class, sink_class,
-                              cfg_class)
+                        # create copies of argument 
+                        c_kwargs = copy.deepcopy(c_kwargs)
+                        sr_kwargs = copy.deepcopy(sr_kwargs)
+                        si_kwargs = copy.deepcopy(si_kwargs)
+                        cfg_kwargs = copy.deepcopy(cfg_kwargs)
 
                         caps = [cap_class(f, **c_kwargs) for f in c_farads]
                         src = src_class(**sr_kwargs)

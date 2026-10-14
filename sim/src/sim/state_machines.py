@@ -3,28 +3,12 @@ from dataclasses import dataclass
 
 from statemachine import HistoryState, State, StateChart
 import numpy as np
+from .models import Capacitor
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 DC_VOLTS = 3.3
-
-
-class Capacitor:
-    def __init__(self, farads: float, v_min: float = 1.6, v_max: float = 3.3):
-        self.farads = farads
-        self.voltage = 0.0
-        self.v_min = v_min
-        self.v_max = v_max
-
-    @property
-    def energy(self) -> float:
-        return self.voltage**2 * self.farads / 2
-
-    @property
-    def min_energy(self) -> float:
-        return self.v_min**2 * self.farads / 2
-
 
 @dataclass(frozen=True)
 class Task:
