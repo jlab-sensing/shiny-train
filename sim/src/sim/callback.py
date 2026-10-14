@@ -51,9 +51,9 @@ from .models import (
     LeacsCapacitor,
     SMSink,
 )
-from .state_machines import Task, init_SinkSM
+from .state_machines import Task, init_MTRSinkSM
 
-_TASK_IDX = {"measure": 0, "tx": 1, "rx": 2}
+_TASK_IDX = {"measure": 0, "analyze": 1, "tx": 2, "rx": 3}
 
 
 @dataclass
@@ -853,12 +853,14 @@ class TaskAssigner:
         caps,
         tasks,
         cap_limit,
+        replan_depth,
     ):
         self.caps = caps
         self.tasks = tasks
         self.N = len(tasks)
         self.K = len(caps)
         self.M = cap_limit
+        self.replan_depth = replan_depth
 
     def presolve(self):
         # make list of fully-charged cap energies for all caps in self.caps.
@@ -872,7 +874,7 @@ class TaskAssigner:
             c.voltage = cap.v_max
             tmp.append(c)
 
-        leakage = [c.leakage for c in tmp]
+        leakage = [c.leakage * c.voltage for c in tmp]
         energy_costs = [t.cost * t.duration for t in self.tasks]
 
         model = build_model(
@@ -890,8 +892,10 @@ class TaskAssigner:
         time,
         floor=3e-6,
     ):
-        leakage = [c.leakage for c in self.caps]
-
+        # c.leakage is current -> p = IV = 0.01*C*V^2
+        # c.energy = 0.5 * v**2 * c
+        #   ==> p_leak = 0.01 C * V**2 = c.energy / 0.01 / 2
+        leakage = [c.leakage * c.voltage for c in self.caps]
         energy_costs = [t.cost * t.duration for t in self.tasks]
 
         model = build_model(
@@ -912,46 +916,27 @@ class TaskAssigner:
         if config is None:
             return False
 
-        min_task_energy = min(t.cost * t.duration for t in self.tasks)
-
-        for cap in config.caps:
-            if cap.voltage >= cap.v_min:
-                available_energy = cap.farads * (cap.voltage**2 - cap.v_min**2) / 2
-
-                if available_energy >= min_task_energy:
-                    return True
-
-        return False
+        return config.depth == self.replan_depth
 
 
 class LeacSimConfig(CapacitorStorageSimConfig):
-    def __init__(
-        self,
-        src,
-        caps,
-        sink,
-        plines,
-        tasks,
-        cap_limit,
-    ):
-        super().__init__(
-            src,
-            caps,
-            sink,
-            plines,
-        )
+    def __init__(self, tasks, cap_limit, initial_cap_idx, replan_depth, **kwargs):
+        super().__init__(**kwargs)
 
         self.cap_limit = cap_limit
 
+        # set initial sm params
         self.sm = self.sink.sm
+        self.sm.cap = self.caps[initial_cap_idx]
+        self.sm.task_start = 0.0
+        self.sm.time = 0.0
+
+        self.last_substate = None
+        self.depth = 0
 
         self.assignment = None
 
-        self.assigner = TaskAssigner(
-            caps,
-            tasks,
-            cap_limit,
-        )
+        self.assigner = TaskAssigner(self.caps, tasks, cap_limit, replan_depth)
 
         result = self.assigner.presolve()
         self.assignment = result["solution"]
@@ -980,6 +965,9 @@ class LeacSimConfig(CapacitorStorageSimConfig):
                         assigned_cap_idx = cap_idx
                         break
 
+            if self.last_substate and active_substate != self.last_substate:
+                self.depth += 1
+
             # Assigned capacitor -> sink.
             # All others -> source.
             for i, cap in enumerate(self.caps):
@@ -993,11 +981,13 @@ class LeacSimConfig(CapacitorStorageSimConfig):
 
         # Solve a new assignment when scheduling
         # becomes possible.
-        # if self.assigner.should_schedule(self):
-        #     result = self.assigner.assign(time)
-        #
-        #     self.assignment = result["solution"]
+        if self.assigner.should_schedule(self):
+            result = self.assigner.assign(time)
 
+            self.assignment = result["solution"]
+            self.depth = 0  # reset the replan counter
+
+        self.last_substate = active_substate
         self._update_sink()
 
     def _decode_assignment_result(
@@ -1085,6 +1075,7 @@ class LeacSimConfig(CapacitorStorageSimConfig):
 
 if __name__ == "__main__":
     M = 2
+    replan_depth = 3
 
     CONST_VOLTAGE = 3.3
 
@@ -1128,16 +1119,9 @@ if __name__ == "__main__":
         Task(cost=20.03e-4 * CONST_VOLTAGE, duration=0.937, name="rx"),
     ]
 
-    sink = SMSink(init_SinkSM(caps[0]))
+    sink = SMSink(init_MTRSinkSM(caps[0]))
 
-    config = LeacSimConfig(
-        src,
-        caps,
-        sink,
-        2,
-        tasks,
-        M,
-    )
+    config = LeacSimConfig(src, caps, sink, 2, tasks, M, replan_depth)
 
     sim = CapacitorStorageSim(config)
 

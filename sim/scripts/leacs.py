@@ -1,98 +1,76 @@
 #!/usr/bin/env python
 
-"""Example showing multiple simulation runs in parallel.
-
-Deep copy with the `copy` module did not with the class inheritence
-configuration. We recommend creating a function to return a specific
-configuration based on parameters as shown here.
-"""
+"""Run LEACS simulation."""
 
 import time
 
 from sim.callback import LeacSimConfig
 from sim.models import (
     BonitoSource,
-    Capacitor,
     CVCapacitor,
     IdealCapacitor,
     SimulationRunner,
     SMSink,
+    simulation_config_matrix,
 )
-from sim.state_machines import Task, init_SinkSM
+from sim.state_machines import MATRSinkSM, Task
 
 
-def create_config(caps: list[Capacitor]):
-    M = 2
-    CONST_VOLTAGE = 3.3
-
-    src = BonitoSource(
-        "/home/jtmadden/repos/jlab/shiny-train/sim/data/bonito/pwr_cars.h5",
-        duration=3600,
-        downsample=30000,
-    )
-
-    # src = ConstantSource(
-    #     1,
-    #     duration=2,
-    #     dt=0.01,
-    # )
-
-    # src = SineSource(
-    #     1.70e-2,
-    #     1.70e-2,
-    #     2.00,
-    #     0.00,
-    #     duration=100,
-    #     dt=0.01,
-    # )
+def create_tasks() -> list:
+    CONST_VOLTAGE = 3.2
 
     tasks = [  # bookkeeping for LeacSimConfig; SMSink is hardcoded with identical Tasks
         Task(cost=11.68e-4 * CONST_VOLTAGE, duration=0.511, name="measure"),
+        Task(cost=2 * 11.68e-4 * CONST_VOLTAGE, duration=0.511, name="analyze"),
         Task(cost=86.52e-4 * CONST_VOLTAGE, duration=0.285, name="tx"),
         Task(cost=20.03e-4 * CONST_VOLTAGE, duration=0.937, name="rx"),
     ]
 
-    sink = SMSink(init_SinkSM(caps[0]))
-
-    config = LeacSimConfig(
-        src,
-        caps,
-        sink,
-        2,
-        tasks,
-        M,
-    )
-
-    return config
+    return tasks
 
 
 if __name__ == "__main__":
-    cap_values = [
-        6e-3,
-        6e-4,
-        6e-3,
+    caps = [
+        1e-3,
+        4.7e-3,
+        10e-3,
     ]
 
-    ideal_caps = [IdealCapacitor(c) for c in cap_values]
-    ideal_config = create_config(ideal_caps)
-    ideal_config.name = "Ideal"
-
-    cv_caps = [CVCapacitor(c) for c in cap_values]
-    cv_config = create_config(cv_caps)
-    cv_config.name = "Leaky"
-
-    #
-    # Runner
-    #
-
-    configs = [
-        ideal_config,
-        cv_config,
-    ]
+    configs = simulation_config_matrix(
+        [IdealCapacitor, CVCapacitor],
+        caps,
+        [BonitoSource, BonitoSource, BonitoSource, BonitoSource],
+        [
+            {"duration": 1200, "downsample": 30000, "name": "node0"},
+            {"duration": 1200, "downsample": 30000, "name": "node1"},
+            {"duration": 1200, "downsample": 30000, "name": "node2"},
+            {"duration": 1200, "downsample": 30000, "name": "node3"},
+        ],
+        [SMSink],
+        {"sink": MATRSinkSM()},
+        [LeacSimConfig],
+        {
+            "p_lines": 2,
+            "tasks": create_tasks(),
+            "cap_limit": 2,
+            "initial_cap_idx": 0,
+            "replan_depth": 3,
+        },
+        names=[
+            "Ideal/node0",
+            "Ideal/node1",
+            "Ideal/node2",
+            "Ideal/node3",
+            "CV/node0",
+            "CV/node1",
+            "CV/node2",
+            "CV/node3",
+        ],
+    )
 
     runner = SimulationRunner(configs)
     start = time.time()
-    results = runner.run()
+    results = runner.run(progress_bar=True)
     print(f"runtime: {time.time() - start}")
     runner.plot()
     runner.show()
