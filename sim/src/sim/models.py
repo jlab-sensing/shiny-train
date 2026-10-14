@@ -2035,7 +2035,7 @@ def simulation_config_matrix(
         cap_kwargs = [cap_kwargs for _ in cap_classes]
 
     if isinstance(cap_farads[0], float):
-        cap_farads = [cap_farads for _ in cap_classes]
+        cap_farads = [cap_farads]
 
     if isinstance(src_kwargs, dict):
         src_kwargs = [src_kwargs for _ in src_classes]
@@ -2052,6 +2052,9 @@ def simulation_config_matrix(
             for src_class, sr_kwargs in zip(src_classes, src_kwargs):
                 for sink_class, si_kwargs in zip(sink_classes, sink_kwargs):
                     for cfg_class, cfg_kwargs in zip(config_classes, config_kwargs):
+
+                        print(cap_class, c_farads, src_class, sink_class,
+                              cfg_class)
 
                         caps = [cap_class(f, **c_kwargs) for f in c_farads]
                         src = src_class(**sr_kwargs)

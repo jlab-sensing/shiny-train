@@ -79,7 +79,30 @@ class TestRunner(unittest.TestCase):
 
         self.assertTrue(True)
 
-    def test_simulation_config_matrix(self):
+
+
+    def test_simulation_config_matrix_basic(self):
+        configs = simulation_config_matrix(
+            [IdealCapacitor, CVCapacitor],
+            [10e-6, 47e-6, 100e-6],
+            [ConstantSource],
+            {"power": 0.1, "dt": 0.1, "duration": 60.0, "voltage": 3.3},
+            [ConstantSink],
+            {"power": 0.1},
+            [MyConfig],
+            {"p_lines": 2}
+        )
+
+        self.assertEqual(2, len(configs))
+
+        runner = SimulationRunner(configs)
+        runner.run(progress_bar=False)
+        runner.plot()
+
+        self.assertTrue(True)
+
+
+    def test_simulation_config_matrix_cap(self):
         configs = simulation_config_matrix(
             [IdealCapacitor, CVCapacitor],
             [[10e-6, 47e-6, 100e-6], [22e-6, 47e-6, 330e-6]],
