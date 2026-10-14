@@ -916,20 +916,11 @@ class TaskAssigner:
         if config is None:
             return False
 
-        if config.depth == self.replan_depth:
-            return True
-        else:
-            return False
+        return config.depth == self.replan_depth
+
 
 class LeacSimConfig(CapacitorStorageSimConfig):
-    def __init__(
-        self,
-        tasks,
-        cap_limit,
-        initial_cap_idx,
-        replan_depth,
-        **kwargs
-    ):
+    def __init__(self, tasks, cap_limit, initial_cap_idx, replan_depth, **kwargs):
         super().__init__(**kwargs)
 
         self.cap_limit = cap_limit
@@ -945,12 +936,7 @@ class LeacSimConfig(CapacitorStorageSimConfig):
 
         self.assignment = None
 
-        self.assigner = TaskAssigner(
-            self.caps,
-            tasks,
-            cap_limit,
-            replan_depth
-        )
+        self.assigner = TaskAssigner(self.caps, tasks, cap_limit, replan_depth)
 
         result = self.assigner.presolve()
         self.assignment = result["solution"]
@@ -1135,15 +1121,7 @@ if __name__ == "__main__":
 
     sink = SMSink(init_MTRSinkSM(caps[0]))
 
-    config = LeacSimConfig(
-        src,
-        caps,
-        sink,
-        2,
-        tasks,
-        M,
-        replan_depth
-    )
+    config = LeacSimConfig(src, caps, sink, 2, tasks, M, replan_depth)
 
     sim = CapacitorStorageSim(config)
 

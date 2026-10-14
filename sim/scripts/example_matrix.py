@@ -1,22 +1,20 @@
 #!/usr/bin/env python
 
-"""Example showing multiple simulation runs with the simulation_config_matrix
-"""
+"""Example showing multiple simulation runs with the simulation_config_matrix"""
 
 import time
 
 from sim.callback import LeacSimConfig
 from sim.models import (
-    ConstantSource,
     BonitoSource,
-    Capacitor,
     CVCapacitor,
     IdealCapacitor,
     SimulationRunner,
     SMSink,
     simulation_config_matrix,
 )
-from sim.state_machines import Task, MATRSinkSM, init_MATRSinkSM
+from sim.state_machines import MATRSinkSM, Task
+
 
 def create_tasks() -> list:
     CONST_VOLTAGE = 3.2
@@ -29,6 +27,7 @@ def create_tasks() -> list:
     ]
 
     return tasks
+
 
 if __name__ == "__main__":
     caps = [
@@ -45,8 +44,7 @@ if __name__ == "__main__":
         [SMSink],
         {"sink": MATRSinkSM()},
         [LeacSimConfig],
-        {"plines": 2, "tasks": create_tasks(), "cap_limit": 2,
-         "initial_cap_idx": 0},
+        {"plines": 2, "tasks": create_tasks(), "cap_limit": 2, "initial_cap_idx": 0},
     )
 
     runner = SimulationRunner(configs)

@@ -15,6 +15,7 @@ from multiprocessing import Manager, Pool
 from queue import Queue
 
 import h5py
+
 # import matplotlib
 # matplotlib.use('QtAgg')
 import matplotlib.pyplot as plt
@@ -555,7 +556,6 @@ class BonitoSource(Source):
             time for the given dataset.
         """
 
-
         if datapath:
             if os.path.exists(datapath):
                 self.datapath = datapath
@@ -615,7 +615,7 @@ class BonitoSource(Source):
 
             # get power from file
             power = file["data"][self.name][self.idx]
-        return power*64
+        return power * 64
 
 
 class Sink(SwitchedComponent):
@@ -829,7 +829,6 @@ class SimulationResults:
 
         self._parse_config(config)
 
-
     def _parse_config(self, config: CapacitorStorageSimConfig | None = None):
         """Stores attributes from config to ensure objects are picklable.
 
@@ -847,7 +846,6 @@ class SimulationResults:
             self.p_lines = 0
             self.farads = []
             self.name = ""
-
 
     def get_slice(self) -> "SimulationResults":
         """Get a slice of the results.
@@ -1367,9 +1365,7 @@ class SimulationPlotter:
             total_energy_list = res.ts["e_caps"]
             total_energy = res.ts["e_sum_caps"]
 
-            for idx, (cap, energy) in enumerate(
-                zip(res.caps, total_energy_list)
-            ):
+            for idx, (cap, energy) in enumerate(zip(res.caps, total_energy_list)):
                 axs[idx].plot(time, energy, label=f"{cap.farads}")
 
             axs[-1].plot(time, total_energy, label="Total")
@@ -1976,7 +1972,6 @@ class CapacitorStorageSim:
         pass
 
 
-
 def create_caps_list(
     model: Callable,
     values: list[float],
@@ -2056,12 +2051,20 @@ def simulation_config_matrix(
     if isinstance(config_kwargs, dict):
         config_kwargs = [config_kwargs for _ in config_classes]
 
-    num_configs = len(cap_classes) * len(cap_farads) * len(src_classes) * len(sink_classes) * len(config_classes)
+    num_configs = (
+        len(cap_classes)
+        * len(cap_farads)
+        * len(src_classes)
+        * len(sink_classes)
+        * len(config_classes)
+    )
     if not names:
         names = [f"Config {i}" for i in range(num_configs)]
     else:
         if num_configs != len(names):
-            raise RuntimeError(f"Number of names ({len(names)}) does not match number of configs ({num_configs})")
+            raise RuntimeError(
+                f"Number of names ({len(names)}) does not match number of configs ({num_configs})"
+            )
 
     config_idx = 0
 
@@ -2071,8 +2074,7 @@ def simulation_config_matrix(
             for src_class, sr_kwargs in zip(src_classes, src_kwargs):
                 for c_farads in cap_farads:
                     for cap_class, c_kwargs in zip(cap_classes, cap_kwargs):
-
-                        # create copies of argument 
+                        # create copies of argument
                         c_kwargs = copy.deepcopy(c_kwargs)
                         sr_kwargs = copy.deepcopy(sr_kwargs)
                         si_kwargs = copy.deepcopy(si_kwargs)
@@ -2088,15 +2090,13 @@ def simulation_config_matrix(
                                 caps=caps,
                                 sink=sink,
                                 name=names[config_idx],
-                                **cfg_kwargs
+                                **cfg_kwargs,
                             )
                         )
 
                         config_idx += 1
 
     return config_objs
-
-
 
 
 class SimulationRunner:

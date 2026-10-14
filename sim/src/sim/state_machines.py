@@ -1,14 +1,16 @@
 import warnings
 from dataclasses import dataclass
 
-from statemachine import HistoryState, State, StateChart
 import numpy as np
+from statemachine import HistoryState, State, StateChart
+
 from .models import Capacitor
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 DC_VOLTS = 3.3
+
 
 @dataclass(frozen=True)
 class Task:
@@ -137,7 +139,7 @@ class MATRSinkSM(StateChart):
         )
         analyze = State(
             "analyze",
-            value=Task(cost=2*11.68e-4 * DC_VOLTS, duration=0.511, name="analyze"),
+            value=Task(cost=2 * 11.68e-4 * DC_VOLTS, duration=0.511, name="analyze"),
         )
         tx = State(
             "tx", value=Task(cost=86.52e-4 * DC_VOLTS, duration=0.285, name="tx")
@@ -193,10 +195,10 @@ class MATRSinkSM(StateChart):
             self.load_value = target.value.cost
 
     def on_enter_analyze(self, target, source=None, **kwargs):
-                if source is None or source.id != "analyze":
-                    # print(f"{time:.6f}:    Exiting {source.id} and entering {target.id}")
-                    self.task_start = self.time
-                    self.load_value = target.value.cost
+        if source is None or source.id != "analyze":
+            # print(f"{time:.6f}:    Exiting {source.id} and entering {target.id}")
+            self.task_start = self.time
+            self.load_value = target.value.cost
 
     def on_enter_tx(self, target, source=None, **kwargs):
         if source is None or source.id != "tx":
@@ -228,16 +230,10 @@ class MATRSinkSM(StateChart):
         return False  # fallback default
 
     def analyze_pass(self, n=1.960, **kwargs):  # 95% chance of failure
-        if np.abs(self.rng.standard_normal()) >= n:
-            return True
-        else:
-            return False
+        return np.abs(self.rng.standard_normal()) >= n
 
     def rx_pass(self, n=0.025, **kwargs):  # 2% chance of failure
-        if np.abs(self.rng.standard_normal()) >= n:
-            return True
-        else:
-            return False
+        return np.abs(self.rng.standard_normal()) >= n
 
     def charged(self):
         return self.cap.voltage >= self.cap.v_max
@@ -316,7 +312,7 @@ if __name__ == "__main__":
     cap.voltage = 3.0
     cap.v_max = 3.3
 
-    sm = init_SinkSM(cap)
+    sm = init_MATRSinkSM(cap)
 
     # History for plotting
     times = [sm.time]
