@@ -2003,6 +2003,7 @@ def simulation_config_matrix(
     config_classes: list[Callable],
     config_kwargs: list[dict] | dict,
     cap_kwargs: list[dict] | dict | None = None,
+    names: list[str] | None = None,
 ) -> list[CapacitorStorageSimConfig]:
     """Returns a matrix of configurations.
 
@@ -2014,6 +2015,12 @@ def simulation_config_matrix(
     arguments. Otherwise, for example, different config_classes require
     different kwargs, you can specify per object.
 
+    The names of the configurations is done by the order of arguments. First
+    index will refer to the first capacitor, first source configuration. The
+    second index will refer to the second capacitor config, first source
+    configuration. The third index will refer to the first capacitor config,
+    second source configuration.
+
     Args:
         cap_classes: List of capacitor classes
         cap_farads: List of farads for each simulation
@@ -2024,6 +2031,7 @@ def simulation_config_matrix(
         sink_kwargs: kwargs to pass to the contructor
         config_classes: List of config classes
         config_kwargs: kwargs to pass to the constructor
+        names: Configuration names
 
     Returns:
         List of configuration objects without any shared memory.
@@ -2047,12 +2055,21 @@ def simulation_config_matrix(
     if isinstance(config_kwargs, dict):
         config_kwargs = [config_kwargs for _ in config_classes]
 
+    num_configs = len(cap_classes) * len(cap_farads) * len(src_classes) * len(sink_classes) * len(config_classes)
+    if not names:
+        names = [f"Config {i}" for i in range(num_configs)]
+    else:
+        if num_configs != len(names):
+            raise RuntimeError(f"Number of names ({len(names)}) does not match number of configs ({num_configs})")
+
+    config_idx = 0
+
     config_objs = []
-    for cap_class, c_kwargs in zip(cap_classes, cap_kwargs):
-        for c_farads in cap_farads:
+    for cfg_class, cfg_kwargs in zip(config_classes, config_kwargs):
+        for sink_class, si_kwargs in zip(sink_classes, sink_kwargs):
             for src_class, sr_kwargs in zip(src_classes, src_kwargs):
-                for sink_class, si_kwargs in zip(sink_classes, sink_kwargs):
-                    for cfg_class, cfg_kwargs in zip(config_classes, config_kwargs):
+                for c_farads in cap_farads:
+                    for cap_class, c_kwargs in zip(cap_classes, cap_kwargs):
 
                         # create copies of argument 
                         c_kwargs = copy.deepcopy(c_kwargs)
@@ -2069,9 +2086,12 @@ def simulation_config_matrix(
                                 src=src,
                                 caps=caps,
                                 sink=sink,
+                                name=names[config_idx],
                                 **cfg_kwargs
                             )
                         )
+
+                        config_idx += 1
 
     return config_objs
 

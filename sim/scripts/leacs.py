@@ -40,13 +40,28 @@ if __name__ == "__main__":
     configs = simulation_config_matrix(
         [IdealCapacitor, CVCapacitor],
         caps,
-        [BonitoSource],
-        {"duration": 1200, "downsample": 30000},
+        [BonitoSource, BonitoSource, BonitoSource, BonitoSource],
+        [
+            {"duration": 1200, "downsample": 30000, "name": "node0"},
+            {"duration": 1200, "downsample": 30000, "name": "node1"},
+            {"duration": 1200, "downsample": 30000, "name": "node2"},
+            {"duration": 1200, "downsample": 30000, "name": "node3"},
+        ],
         [SMSink],
         {"sink": MATRSinkSM()},
         [LeacSimConfig],
-        {"plines": 2, "tasks": create_tasks(), "cap_limit": 2,
+        {"p_lines": 2, "tasks": create_tasks(), "cap_limit": 2,
          "initial_cap_idx": 0},
+        names=[
+            "Ideal/node0",
+            "Ideal/node1",
+            "Ideal/node2",
+            "Ideal/node3",
+            "CV/node0",
+            "CV/node1",
+            "CV/node2",
+            "CV/node3",
+        ]
     )
 
     runner = SimulationRunner(configs)
