@@ -230,6 +230,7 @@ class CVCapacitor(BaseCapacitor):
     i_min: float = 1e-6
     r_min: float = 1
     r_max: float = 1e9
+    leak_floor: float = 3e-6
 
     model: str = "C_cv"
     library: str = "cap.lib"

@@ -51,7 +51,7 @@ if __name__ == "__main__":
         {"sink": MATRSinkSM()},
         [LeacSimConfig],
         {"p_lines": 2, "tasks": create_tasks(), "cap_limit": 2,
-         "initial_cap_idx": 0},
+         "initial_cap_idx": 0, "replan_depth": 3},
         names=[
             "Ideal/node0",
             "Ideal/node1",

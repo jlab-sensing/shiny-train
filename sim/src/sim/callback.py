@@ -895,7 +895,7 @@ class TaskAssigner:
         # c.leakage is current -> p = IV = 0.01*C*V^2
         # c.energy = 0.5 * v**2 * c
         #   ==> p_leak = 0.01 C * V**2 = c.energy / 0.01 / 2
-        leakage = [c.leakage * c.voltage * for c in self.caps]
+        leakage = [c.leakage * c.voltage for c in self.caps]
         energy_costs = [t.cost * t.duration for t in self.tasks]
 
         model = build_model(
