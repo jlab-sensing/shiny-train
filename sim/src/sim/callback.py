@@ -853,12 +853,14 @@ class TaskAssigner:
         caps,
         tasks,
         cap_limit,
+        replan_depth,
     ):
         self.caps = caps
         self.tasks = tasks
         self.N = len(tasks)
         self.K = len(caps)
         self.M = cap_limit
+        self.replan_depth = replan_depth
 
     def presolve(self):
         # make list of fully-charged cap energies for all caps in self.caps.
@@ -872,7 +874,7 @@ class TaskAssigner:
             c.voltage = cap.v_max
             tmp.append(c)
 
-        leakage = [c.leakage for c in tmp]
+        leakage = [c.leakage * c.voltage for c in tmp]
         energy_costs = [t.cost * t.duration for t in self.tasks]
 
         model = build_model(
@@ -893,7 +895,7 @@ class TaskAssigner:
         # c.leakage is current -> p = IV = 0.01*C*V^2
         # c.energy = 0.5 * v**2 * c
         #   ==> p_leak = 0.01 C * V**2 = c.energy / 0.01 / 2
-        leakage = [c.leakage * c.voltage for c in self.caps]
+        leakage = [c.leakage * c.voltage * for c in self.caps]
         energy_costs = [t.cost * t.duration for t in self.tasks]
 
         model = build_model(
@@ -914,16 +916,10 @@ class TaskAssigner:
         if config is None:
             return False
 
-        min_task_energy = min(t.cost * t.duration for t in self.tasks)
-
-        for cap in config.caps:
-            if cap.voltage >= cap.v_min:
-                available_energy = cap.farads * (cap.voltage**2 - cap.v_min**2) / 2
-
-                if available_energy >= min_task_energy:
-                    return True
-
-        return False
+        if config.depth == self.replan_depth:
+            return True
+        else:
+            return False
 
 class LeacSimConfig(CapacitorStorageSimConfig):
     def __init__(
@@ -931,6 +927,7 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         tasks,
         cap_limit,
         initial_cap_idx,
+        replan_depth,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -943,12 +940,16 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         self.sm.task_start = 0.0
         self.sm.time = 0.0
 
+        self.last_substate = None
+        self.depth = 0
+
         self.assignment = None
 
         self.assigner = TaskAssigner(
             self.caps,
             tasks,
             cap_limit,
+            replan_depth
         )
 
         result = self.assigner.presolve()
@@ -978,6 +979,9 @@ class LeacSimConfig(CapacitorStorageSimConfig):
                         assigned_cap_idx = cap_idx
                         break
 
+            if self.last_substate and active_substate != self.last_substate:
+                self.depth += 1
+
             # Assigned capacitor -> sink.
             # All others -> source.
             for i, cap in enumerate(self.caps):
@@ -991,11 +995,13 @@ class LeacSimConfig(CapacitorStorageSimConfig):
 
         # Solve a new assignment when scheduling
         # becomes possible.
-        # if self.assigner.should_schedule(self):
-        #     result = self.assigner.assign(time)
-        #
-        #     self.assignment = result["solution"]
+        if self.assigner.should_schedule(self):
+            result = self.assigner.assign(time)
 
+            self.assignment = result["solution"]
+            self.depth = 0  # reset the replan counter
+
+        self.last_substate = active_substate
         self._update_sink()
 
     def _decode_assignment_result(
@@ -1083,6 +1089,7 @@ class LeacSimConfig(CapacitorStorageSimConfig):
 
 if __name__ == "__main__":
     M = 2
+    replan_depth = 3
 
     CONST_VOLTAGE = 3.3
 
@@ -1135,6 +1142,7 @@ if __name__ == "__main__":
         2,
         tasks,
         M,
+        replan_depth
     )
 
     sim = CapacitorStorageSim(config)
