@@ -4,6 +4,7 @@ Ideally every model would implement a input and output source such that they
 can be controlled from outside the original function.
 """
 
+import copy
 import math
 import os
 import threading
@@ -112,7 +113,7 @@ class BaseCapacitor(SwitchedComponent):
     """
 
     farads: float
-    v_min: float = 0.8
+    v_min: float = 1.7
     v_max: float = 3.2
     _leakage: float = 3e-6
     initial_voltage: float = 0.0
@@ -519,7 +520,8 @@ class SineSource(Source):
 class BonitoSource(Source):
     def __init__(
         self,
-        filename: str,
+        filename: str = "",
+        datapath: str = "",
         name: str = "node0",
         offset: float = 0,
         duration: float = 0,
@@ -537,8 +539,11 @@ class BonitoSource(Source):
         Passing kwargs "dt" and "duration" override calculated values from the
         dataset. DO NOT do unless you know what you're doing.
 
+        Filename defaults to `pwr_cars.h5`. Datapath defaults to `data/bonito/`
+
         Args:
-            file: Path to h5 data file.
+            filename: Path to h5 data file.
+            datapath: Path to data sources.
             name: Name of the node.
             offset: Dataset time at start of simulation.
             duration: Time to run simulation from offset.
@@ -549,14 +554,31 @@ class BonitoSource(Source):
             time for the given dataset.
         """
 
-        self.filename = filename
+
+        if datapath:
+            if os.path.exists(datapath):
+                self.datapath = datapath
+            else:
+                raise FileNotFoundError(f"Folder {datapath} does not exsits.")
+        else:
+            this_dir = os.path.dirname(os.path.abspath(__file__))
+            module_dir = os.path.join(this_dir, "..", "..")
+            self.datapath = os.path.join(module_dir, "data", "bonito")
+
+        if filename:
+            self.filename = filename
+        else:
+            self.filename = "pwr_cars.h5"
+
+        self.fullpath = os.path.join(self.datapath, self.filename)
+
         self.name = name
 
         self.offset = offset
         self.duration = duration
         self.downsample = downsample
 
-        with h5py.File(filename, "r") as file:
+        with h5py.File(self.fullpath, "r") as file:
             # Convert time inputs to indexes
             dt = (file["time"][1] - file["time"][0]) * self.downsample
             self.idx = int(offset / dt)
@@ -577,7 +599,7 @@ class BonitoSource(Source):
             time: Simulation time.
         """
 
-        with h5py.File(self.filename, "r") as file:
+        with h5py.File(self.fullpath, "r") as file:
             # iterate until we get to the next timestamp
             # TODO (jmadden173): Can implement some sort of binary search to make
             # this go after
@@ -804,7 +826,27 @@ class SimulationResults:
         else:
             self.ts = {}
 
-        self.config = config
+        self._parse_config(config)
+
+
+    def _parse_config(self, config: CapacitorStorageSimConfig | None = None):
+        """Stores attributes from config to ensure objects are picklable.
+
+        Args:
+            config: Simulation config
+        """
+
+        if config:
+            self.caps = config.caps
+            self.p_lines = config.p_lines
+            self.farads = config.farads()
+            self.name = config.name
+        else:
+            self.caps = []
+            self.p_lines = 0
+            self.farads = []
+            self.name = ""
+
 
     def get_slice(self) -> "SimulationResults":
         """Get a slice of the results.
@@ -836,40 +878,38 @@ class SimulationResults:
             config: Simulation config.
         """
 
-        # save config if specified
-        if config:
-            self.config = config
+        self._parse_config(config)
 
         self.ts = {}
 
         self.ts["time"] = np.asarray(analysis.time)
 
         self.ts["capacitors"] = []
-        for idx, cap in enumerate(self.config.caps):
+        for idx, cap in enumerate(self.caps):
             self.ts["capacitors"].append(np.asarray(analysis[f"c{idx}_pos"]))
 
         # first index is capacitors, second index is power lines
         self.ts["cap_switches"] = []
-        for idx, cap in enumerate(self.config.caps):
+        for idx, cap in enumerate(self.caps):
             self.ts["cap_switches"].append([])
-            for line in range(self.config.p_lines):
+            for line in range(self.p_lines):
                 self.ts["cap_switches"][idx].append(
                     np.asarray(analysis[f"ctrl_pwr{line}_c{idx}_pos"])
                 )
 
-        self.ts["v_src"] = analysis["src"]
-        self.ts["v_sink"] = analysis["sink"]
+        self.ts["v_src"] = np.asarray(analysis["src"])
+        self.ts["v_sink"] = np.asarray(analysis["sink"])
 
         self.ts["sw_src"] = []
-        for n in range(self.config.p_lines):
+        for n in range(self.p_lines):
             self.ts["sw_src"].append(np.asarray(analysis[f"ctrl_src_pwr{n}_pos"]))
 
         self.ts["sw_sink"] = []
-        for n in range(self.config.p_lines):
+        for n in range(self.p_lines):
             self.ts["sw_sink"].append(np.asarray(analysis[f"ctrl_pwr{n}_sink_pos"]))
 
         self.ts["plines"] = []
-        for n in range(self.config.p_lines):
+        for n in range(self.p_lines):
             self.ts["plines"].append(np.asarray(analysis[f"pwr{n}"]))
 
         self.ts["pwr_src"] = np.asarray(analysis["v_pwr_source"])
@@ -887,7 +927,7 @@ class SimulationResults:
         self.ts["e_caps"] = self._get_cap_energy(analysis)
 
         self.ts["cap_current"] = []
-        for idx, _ in enumerate(self.config.caps):
+        for idx, _ in enumerate(self.caps):
             self.ts["cap_current"].append(np.asarray(analysis[f"v_sense_{idx}"]))
 
         # Save final energies
@@ -954,12 +994,12 @@ class SimulationResults:
 
         # energy in capacitors
         energy_list = []
-        for idx, cap in enumerate(self.config.caps):
+        for idx, cap in enumerate(self.caps):
             # calculate energy from 1/2 C V^2
             # ORDER matters here, see the following
             # https://github.com/jlab-sensing/shiny-train/pull/35#issuecomment-6066922555
             energy = (analysis[f"c{idx}_pos"] ** 2) * cap.farads * 0.5
-            energy_list.append(energy)
+            energy_list.append(np.asarray(energy))
 
         return energy_list
 
@@ -1099,7 +1139,7 @@ class SimulationPlotter:
         for res in results:
             # mapping to data
             time = res.ts["time"]
-            farads = res.config.farads()
+            farads = res.farads
             voltages = res.ts["capacitors"]
 
             for idx, (farad, voltage) in enumerate(zip(farads, voltages)):
@@ -1126,7 +1166,7 @@ class SimulationPlotter:
         for res in results:
             # mapping to data
             time = res.ts["time"]
-            caps = res.config.caps
+            caps = res.caps
             switches = res.ts["cap_switches"]
 
             row = 0
@@ -1225,8 +1265,10 @@ class SimulationPlotter:
                     label=f"line {n}",
                 )
                 ax.set_ylabel("Voltage (V)")
-                ax.grid()
-                ax.legend()
+
+        for ax in axs:
+            ax.grid()
+            ax.legend()
 
     def _plot_src_sink_power(self, fig: Figure, results: list[SimulationResults]):
         axs = fig.subplots(2, 1, sharex=True)
@@ -1325,7 +1367,7 @@ class SimulationPlotter:
             total_energy = res.ts["e_sum_caps"]
 
             for idx, (cap, energy) in enumerate(
-                zip(res.config.caps, total_energy_list)
+                zip(res.caps, total_energy_list)
             ):
                 axs[idx].plot(time, energy, label=f"{cap.farads}")
 
@@ -1349,7 +1391,7 @@ class SimulationPlotter:
             time = res.ts["time"]
             current = res.ts["cap_current"]
 
-            for idx, (cap, curr) in enumerate(zip(res.config.caps, current)):
+            for idx, (cap, curr) in enumerate(zip(res.caps, current)):
                 # Voltage plot (column 0)
                 axs[idx].plot(
                     time,
@@ -1397,7 +1439,7 @@ class SimulationPlotter:
 
         num_caps = 0
         for res in results:
-            num_caps = max(len(res.config.caps), num_caps)
+            num_caps = max(len(res.caps), num_caps)
         return num_caps
 
     def _max_switches(self, results: list[SimulationResults]) -> int:
@@ -1412,7 +1454,7 @@ class SimulationPlotter:
 
         max_sw = 0
         for res in results:
-            max_sw = max(res.config.p_lines * len(res.config.caps), max_sw)
+            max_sw = max(res.p_lines * len(res.caps), max_sw)
         return max_sw
 
     def _max_plines(self, results: list[SimulationResults]) -> int:
@@ -1427,7 +1469,7 @@ class SimulationPlotter:
 
         max_plines = 0
         for res in results:
-            max_plines = max(res.config.p_lines, max_plines)
+            max_plines = max(res.p_lines, max_plines)
         return max_plines
 
     def plot_final(self, results: list[SimulationResults]):
@@ -1441,7 +1483,7 @@ class SimulationPlotter:
         n_groups = len(results)
         n_bars = len(keys)
 
-        names = [res.config.name for res in results]
+        names = [res.name for res in results]
 
         # Okabe-Ito palette: designed to be distinguishable under the
         # common forms of color vision deficiency
@@ -1933,6 +1975,129 @@ class CapacitorStorageSim:
         pass
 
 
+
+def create_caps_list(
+    model: Callable,
+    values: list[float],
+) -> list[Capacitor]:
+    """Create a list of capacitors objects based on values.
+
+    Args:
+        models: Capacitor model
+        values: List of farads
+
+    Returns:
+        List of capacitor objects
+    """
+
+    return [model(c) for c in values]
+
+
+def simulation_config_matrix(
+    cap_classes: list[Callable],
+    cap_farads: list[list[float]] | list[float],
+    src_classes: list[Callable],
+    src_kwargs: list[dict] | dict,
+    sink_classes: list[Callable],
+    sink_kwargs: list[dict] | dict,
+    config_classes: list[Callable],
+    config_kwargs: list[dict] | dict,
+    cap_kwargs: list[dict] | dict | None = None,
+    names: list[str] | None = None,
+) -> list[CapacitorStorageSimConfig]:
+    """Returns a matrix of configurations.
+
+    Arguments caps, sources, and sink all must be separate objects and cannot
+    share memory.
+
+    All non-class arguments are made as single or list arguments. If a single
+    kwargs list is passed, then all the models are created with those
+    arguments. Otherwise, for example, different config_classes require
+    different kwargs, you can specify per object.
+
+    The names of the configurations is done by the order of arguments. First
+    index will refer to the first capacitor, first source configuration. The
+    second index will refer to the second capacitor config, first source
+    configuration. The third index will refer to the first capacitor config,
+    second source configuration.
+
+    Args:
+        cap_classes: List of capacitor classes
+        cap_farads: List of farads for each simulation
+        cap_kwargs: kwargs to pass to the constructor
+        src_classes: List of source classes
+        src_kwargs: kwargs to pass to the contructor
+        sink_classes: List of sink classes
+        sink_kwargs: kwargs to pass to the contructor
+        config_classes: List of config classes
+        config_kwargs: kwargs to pass to the constructor
+        names: Configuration names
+
+    Returns:
+        List of configuration objects without any shared memory.
+
+    """
+
+    if not cap_kwargs:
+        cap_kwargs = {}
+    if isinstance(cap_kwargs, dict):
+        cap_kwargs = [cap_kwargs for _ in cap_classes]
+
+    if isinstance(cap_farads[0], float):
+        cap_farads = [cap_farads]
+
+    if isinstance(src_kwargs, dict):
+        src_kwargs = [src_kwargs for _ in src_classes]
+
+    if isinstance(sink_kwargs, dict):
+        sink_kwargs = [sink_kwargs for _ in sink_classes]
+
+    if isinstance(config_kwargs, dict):
+        config_kwargs = [config_kwargs for _ in config_classes]
+
+    num_configs = len(cap_classes) * len(cap_farads) * len(src_classes) * len(sink_classes) * len(config_classes)
+    if not names:
+        names = [f"Config {i}" for i in range(num_configs)]
+    else:
+        if num_configs != len(names):
+            raise RuntimeError(f"Number of names ({len(names)}) does not match number of configs ({num_configs})")
+
+    config_idx = 0
+
+    config_objs = []
+    for cfg_class, cfg_kwargs in zip(config_classes, config_kwargs):
+        for sink_class, si_kwargs in zip(sink_classes, sink_kwargs):
+            for src_class, sr_kwargs in zip(src_classes, src_kwargs):
+                for c_farads in cap_farads:
+                    for cap_class, c_kwargs in zip(cap_classes, cap_kwargs):
+
+                        # create copies of argument 
+                        c_kwargs = copy.deepcopy(c_kwargs)
+                        sr_kwargs = copy.deepcopy(sr_kwargs)
+                        si_kwargs = copy.deepcopy(si_kwargs)
+                        cfg_kwargs = copy.deepcopy(cfg_kwargs)
+
+                        caps = [cap_class(f, **c_kwargs) for f in c_farads]
+                        src = src_class(**sr_kwargs)
+                        sink = sink_class(**si_kwargs)
+
+                        config_objs.append(
+                            cfg_class(
+                                src=src,
+                                caps=caps,
+                                sink=sink,
+                                name=names[config_idx],
+                                **cfg_kwargs
+                            )
+                        )
+
+                        config_idx += 1
+
+    return config_objs
+
+
+
+
 class SimulationRunner:
     """Runs one or more instances of CapacitorStorageSim"""
 
@@ -1993,9 +2158,9 @@ class SimulationRunner:
         """
 
         with Manager() as m:
-            if progress_bar:
-                q = m.Queue()
+            q = m.Queue()
 
+            if progress_bar:
                 # create bars
                 bars = []
                 for idx, cfg in enumerate(self.configs):
@@ -2047,7 +2212,7 @@ class SimulationRunner:
         """Runs a single instance of the simulation.
 
         Args:
-            idx: Simulatoin index
+            idx: Simulation index
             config: Simulation config
             queue: Message queue for progress
 

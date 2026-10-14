@@ -921,28 +921,24 @@ class TaskAssigner:
         else:
             return False
 
-
 class LeacSimConfig(CapacitorStorageSimConfig):
     def __init__(
         self,
-        src,
-        caps,
-        sink,
-        plines,
         tasks,
         cap_limit,
+        initial_cap_idx,
         replan_depth,
+        **kwargs
     ):
-        super().__init__(
-            src,
-            caps,
-            sink,
-            plines,
-        )
+        super().__init__(**kwargs)
 
         self.cap_limit = cap_limit
 
+        # set initial sm params
         self.sm = self.sink.sm
+        self.sm.cap = self.caps[initial_cap_idx]
+        self.sm.task_start = 0.0
+        self.sm.time = 0.0
 
         self.last_substate = None
         self.depth = 0
@@ -950,7 +946,7 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         self.assignment = None
 
         self.assigner = TaskAssigner(
-            caps,
+            self.caps,
             tasks,
             cap_limit,
             replan_depth
