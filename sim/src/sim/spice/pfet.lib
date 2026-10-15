@@ -1,0 +1,19 @@
+* Ideal P-channel MOSFET
+* Ports: D G S
+.SUBCKT IDEAL_PFET d g s PARAMS: Ron=0.1 Roff=1G Vth=1.0 Rg=1 Cgs=50p Cgd=10p Vf=0.7
+
+* Gate network
+Rg   g gi {Rg}
+Cgs  gi s {Cgs}
+Cgd  gi d {Cgd}
+Rgs  gi s 1T
+
+* Channel: on when V(s) - V(gi) > Vth
+S1   d s s gi SWP
+
+* Body diode (anode at drain, cathode at source)
+Dbody d s DBODY
+
+.MODEL SWP SW(Vt={Vth} Vh=0.3 Ron={Ron} Roff={Roff})
+.MODEL DBODY D(IS=1e-12 N=1 RS=0.01 CJO=0)
+.ENDS IDEAL_PFET
