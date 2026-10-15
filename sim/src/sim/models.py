@@ -1078,12 +1078,12 @@ class SimulationResults:
 
 
 class SimulationPlotter:
-    def __init__(self, layout: str = "moasic"):
+    def __init__(self, layout: str = "mosaic"):
         """Initialize a plotter.
 
         Valid options for layout is the following:
-            "individual": Each plot gets it's own figure.
-            "moasic": All plots shown in the same figure.
+            "individual": Each plot gets its own figure.
+            "mosaic": All plots shown in the same figure.
 
         Args:
             layout: Type of plot layout.
@@ -1109,7 +1109,7 @@ class SimulationPlotter:
         if layout == "individual":
             figs = {n: plt.figure() for n in plot_names}
 
-        elif layout == "moasic":
+        elif layout == "mosaic":
             ts_fig = plt.figure(figsize=(16, 12))
             ts_subfigs = ts_fig.subfigures(4, 3)
 

@@ -44,6 +44,8 @@ from pyscipopt import Model, quicksum
 from pyscipopt.recipes.nonlinear import set_nonlinear_objective
 
 from .models import (
+    ConstantSource,
+    SineSource,
     BonitoSource,
     Capacitor,
     CapacitorStorageSim,
@@ -916,6 +918,9 @@ class TaskAssigner:
         if config is None:
             return False
 
+        if self.replan_depth <= 0:
+            return False
+
         return config.depth == self.replan_depth
 
 
@@ -1091,18 +1096,16 @@ if __name__ == "__main__":
     #     dt=0.01,
     # )
 
-    # src = SineSource(
-    #     1.70e-2,
-    #     1.70e-2,
-    #     2.00,
-    #     0.00,
-    #     duration=100,
-    #     dt=0.01,
-    # )
-
-    src = BonitoSource(
-        "/home/mwmaster/catch/pwr_cars.h5", duration=3600, downsample=30000
+    src = SineSource(
+        1.70e-2,
+        1.70e-2,
+        2.00,
+        0.00,
+        duration=100,
+        dt=0.01,
     )
+
+    # src = BonitoSource(duration=3600, downsample=30000)
 
     caps = [
         LeacsCapacitor(
@@ -1121,7 +1124,7 @@ if __name__ == "__main__":
 
     sink = SMSink(init_MTRSinkSM(caps[0]))
 
-    config = LeacSimConfig(src, caps, sink, 2, tasks, M, replan_depth)
+    config = LeacSimConfig(tasks, M, 0, replan_depth, src=src, caps=caps, sink=sink, p_lines=2)
 
     sim = CapacitorStorageSim(config)
 
@@ -1132,3 +1135,4 @@ if __name__ == "__main__":
     print(f"runtime: {time.time() - start}")
 
     sim.plot()
+    sim.show()

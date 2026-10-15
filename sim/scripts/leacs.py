@@ -7,6 +7,7 @@ import time
 from sim.callback import LeacSimConfig
 from sim.models import (
     BonitoSource,
+    RWSource,
     CVCapacitor,
     IdealCapacitor,
     SimulationRunner,
@@ -39,38 +40,47 @@ if __name__ == "__main__":
     configs = simulation_config_matrix(
         [IdealCapacitor, CVCapacitor],
         caps,
+        # [BonitoSource, BonitoSource, BonitoSource, BonitoSource],
+        [RWSource]*100,
+        # [
+        #     {"duration": 1200, "downsample": 30000, "name": "node0"},
+        #     {"duration": 1200, "downsample": 30000, "name": "node1"},
+        #     {"duration": 1200, "downsample": 30000, "name": "node2"},
+        #     {"duration": 1200, "downsample": 30000, "name": "node3"},
+        # ],
         [
-            BonitoSource(datapath="/home/mwmaster/catch/"),
-            BonitoSource(datapath="/home/mwmaster/catch/"),
-            BonitoSource(datapath="/home/mwmaster/catch/"),
-            BonitoSource(datapath="/home/mwmaster/catch/")
-        ],
-        [
-            {"duration": 1200, "downsample": 30000, "name": "node0"},
-            {"duration": 1200, "downsample": 30000, "name": "node1"},
-            {"duration": 1200, "downsample": 30000, "name": "node2"},
-            {"duration": 1200, "downsample": 30000, "name": "node3"},
-        ],
+            {"duration": 1000, "dt":1}
+        ]*100,
         [SMSink],
         {"sink": MATRSinkSM()},
-        [LeacSimConfig],
-        {
-            "p_lines": 2,
-            "tasks": create_tasks(),
-            "cap_limit": 2,
-            "initial_cap_idx": 0,
-            "replan_depth": 3,
-        },
-        names=[
-            "Ideal/node0",
-            "Ideal/node1",
-            "Ideal/node2",
-            "Ideal/node3",
-            "CV/node0",
-            "CV/node1",
-            "CV/node2",
-            "CV/node3",
+        [LeacSimConfig, LeacSimConfig],
+        [
+            {
+                "p_lines": 2,
+                "tasks": create_tasks(),
+                "cap_limit": 2,
+                "initial_cap_idx": 0,
+                "replan_depth": 3,
+            },
+            {
+                "p_lines": 2,
+                "tasks": create_tasks(),
+                "cap_limit": 2,
+                "initial_cap_idx": 0,
+                "replan_depth": -1,
+            }
         ],
+        # names=[
+        #     "Ideal/node0",
+        #     "Ideal/node1",
+        #     "Ideal/node2",
+        #     "Ideal/node3",
+        #     "CV/node0",
+        #     "CV/node1",
+        #     "CV/node2",
+        #     "CV/node3",
+        # ],
+        names=[f"Ideal/node{i}" for i in range(100)] + [f"CV/node{i}" for i in range(100)],
     )
 
     runner = SimulationRunner(configs)
