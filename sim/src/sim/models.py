@@ -522,10 +522,11 @@ class SineSource(Source):
 class RWSource(Source):
     def __init__(
         self,
-        initial_mean: float,
-        stdev: float,
-        power_roof: float = 1.0,
+        initial_mean: float = 5e-3,
+        stdev: float = 1e-4,
+        power_roof: float = 1e-2,
         power_floor: float = 0.0,
+        seed: int = 42,
         **kwargs,
     ):
         """
@@ -543,8 +544,8 @@ class RWSource(Source):
         # Check if invalid distribution parameters were specified
         if initial_mean < 0:
             raise RuntimeError("Initial mean must be nonnegative.")
-        if variance < 0:
-            raise RuntimeError("Variance must be nonnegative.")
+        if stdev < 0:
+            raise RuntimeError("Standard deviation must be nonnegative.")
         if power_floor < 0:
             raise RuntimeError("Power floor must be nonnegative.")
         if power_roof < 0:
@@ -555,13 +556,14 @@ class RWSource(Source):
             raise RuntimeError(
                 "Initial mean must be in [power_floor, power_roof]."
             )
-
         self.mean = initial_mean
         self.stdev = stdev
+        # self.rng = np.random.default_rng(seed=seed)
         self.rng = np.random.default_rng()
 
         self.power_floor = power_floor
         self.power_roof = power_roof
+        self.time = None
 
         # this init must be after setting variables that are used in load_data.
         # The Source derived class calls the abstract method load_data so they
@@ -569,12 +571,14 @@ class RWSource(Source):
         Source.__init__(self, **kwargs)
 
     def get_power(self, time: float):
-        delta = self.rng.normal(loc=0.0, scale=self.stdev)
-        if self.mean + delta < self.power_floor:
+        if time != self.time:
             delta = self.rng.normal(loc=0.0, scale=self.stdev)
-        elif self.mean + delta > self.power_roof:
-            delta = self.rng.normal(loc=0.0, scale=self.stdev)
-        self.mean += delta
+            if self.mean + delta < self.power_floor:
+                delta = self.rng.normal(loc=0.0, scale=self.stdev)
+            elif self.mean + delta > self.power_roof:
+                delta = self.rng.normal(loc=0.0, scale=self.stdev)
+            self.mean += delta
+            self.time = time
         return self.mean
 
 
@@ -1797,7 +1801,7 @@ class CapacitorStorageSim:
             "_r_source",
             "v_r_source",
             circuit.gnd,
-            voltage_expression="{min(max(abs(V(v_src_pos)**2/V(v_pwr_source)), 10), 1e9)}",
+            voltage_expression="{min(max(abs(V(v_src_pos)**2/V(v_pwr_source)), 0.01), 1e6)}",
         )
 
         circuit.raw_spice += "R1 v_src_pos src R='{V(v_r_source)}'\n"
