@@ -490,8 +490,8 @@ class SineSource(Source):
         """Initializes the SineSource
 
         Args:
-            source_am: source amplitude (V)
-            source_os: source voltage offset (V)
+            source_am: source amplitude (W)
+            source_os: source power offset (W)
             source_hz: frequency of the source (Hz)
             source_ph: phase offset of the source in radians
         """
@@ -517,6 +517,69 @@ class SineSource(Source):
         vs += self.source_os
 
         return vs
+
+
+class RWSource(Source):
+    def __init__(
+        self,
+        initial_mean: float = 5e-3,
+        stdev: float = 1e-4,
+        power_roof: float = 1e-2,
+        power_floor: float = 0.0,
+        seed: int = 42,
+        **kwargs,
+    ):
+        """
+        Initializes the RWSource with an initial position and a variance
+
+        This source starts at initial_mean
+
+        Args:
+            initial_mean: initial position for the random walker (watts, W)
+            stdev: source random walk standard deviation (watts, W)
+            power_roof:
+            power_floor:
+        """
+
+        # Check if invalid distribution parameters were specified
+        if initial_mean < 0:
+            raise RuntimeError("Initial mean must be nonnegative.")
+        if stdev < 0:
+            raise RuntimeError("Standard deviation must be nonnegative.")
+        if power_floor < 0:
+            raise RuntimeError("Power floor must be nonnegative.")
+        if power_roof < 0:
+            raise RuntimeError("Power roof must be nonnegative.")
+        if power_floor > power_roof:
+            raise RuntimeError("Power roof must be greater than power floor.")
+        if power_floor > initial_mean or power_roof < initial_mean:
+            raise RuntimeError(
+                "Initial mean must be in [power_floor, power_roof]."
+            )
+        self.mean = initial_mean
+        self.stdev = stdev
+        # self.rng = np.random.default_rng(seed=seed)
+        self.rng = np.random.default_rng()
+
+        self.power_floor = power_floor
+        self.power_roof = power_roof
+        self.time = None
+
+        # this init must be after setting variables that are used in load_data.
+        # The Source derived class calls the abstract method load_data so they
+        # have to be set before the super call.
+        Source.__init__(self, **kwargs)
+
+    def get_power(self, time: float):
+        if time != self.time:
+            delta = self.rng.normal(loc=0.0, scale=self.stdev)
+            if self.mean + delta < self.power_floor:
+                delta = self.rng.normal(loc=0.0, scale=self.stdev)
+            elif self.mean + delta > self.power_roof:
+                delta = self.rng.normal(loc=0.0, scale=self.stdev)
+            self.mean += delta
+            self.time = time
+        return self.mean
 
 
 class BonitoSource(Source):
@@ -560,7 +623,7 @@ class BonitoSource(Source):
             if os.path.exists(datapath):
                 self.datapath = datapath
             else:
-                raise FileNotFoundError(f"Folder {datapath} does not exsits.")
+                raise FileNotFoundError(f"Folder {datapath} does not exist.")
         else:
             this_dir = os.path.dirname(os.path.abspath(__file__))
             module_dir = os.path.join(this_dir, "..", "..")
@@ -594,7 +657,6 @@ class BonitoSource(Source):
 
     def get_power(self, time: float):
         """Gets the next power checking against the current sim time
-
 
         Args:
             time: Simulation time.
@@ -1739,7 +1801,7 @@ class CapacitorStorageSim:
             "_r_source",
             "v_r_source",
             circuit.gnd,
-            voltage_expression="{min(max(abs(V(v_src_pos)**2/V(v_pwr_source)), 10), 1e9)}",
+            voltage_expression="{min(max(abs(V(v_src_pos)**2/V(v_pwr_source)), 0.01), 1e6)}",
         )
 
         circuit.raw_spice += "R1 v_src_pos src R='{V(v_r_source)}'\n"
