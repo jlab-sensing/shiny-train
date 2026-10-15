@@ -32,6 +32,125 @@ from scipy.integrate import cumulative_trapezoid
 from tqdm import tqdm
 
 
+@dataclass(kw_only=True)
+class SpiceComponent:
+    """Loads a spice simulation component."""
+
+    model: str = ""
+    library: str = ""
+
+    def library_realpath(self) -> str:
+        """Get the resolved path of the library."""
+
+        file_path = os.path.abspath(__file__)
+        spice_path = os.path.join(os.path.dirname(file_path), "spice")
+        lib_path = os.path.join(spice_path, self.library)
+
+        if not os.path.exists(lib_path):
+            raise FileNotFoundError(f"Library does not exist at {lib_path}")
+
+        return lib_path
+
+    def model_kwargs(self):
+        """Gets kwargs needed for spice model parameters"""
+
+        return {}
+
+
+@dataclass
+class BaseSwitch(SpiceComponent):
+    """Base classes for switches inside of the simulation.
+
+    Expects the ordering to be DGS
+
+    Attributes:
+        r_on: Resistance when switched on
+        gate_voltage: Level of voltage source to drive gate
+    """
+
+    r_on: float = 1.0
+    gate_voltage: float = 3.3
+
+    def dissipation(self, current: float) -> float:
+        """Find power dissipation of the switch
+
+        Args:
+            current: Current in amps
+
+        Returns:
+            Energy lost in the MOSFET.
+        """
+
+        return (current**2) * self.r_on
+
+
+class Switches:
+    @dataclass
+    class IdealSwitch(BaseSwitch):
+        """Ideal switch
+
+        Note (jmadden173): Had to modify vh (hysteresis) to high value to get
+        simulation functional.
+        """
+
+        r_on: float = 0.1
+
+        model: str = "IDEAL_PFET"
+        library: str = "pfet.lib"
+
+    @dataclass
+    class DMP1555UFA(BaseSwitch):
+        """Diodes DMP1555UFA
+
+        https://www.diodes.com/assets/Datasheets/DMP1555UFA.pdf
+        """
+
+        model: str = "DMP1555UFA"
+        library: str = "DMP1555UFA.spice.txt"
+
+    @dataclass
+    class DMP21D2UFA(BaseSwitch):
+        """Diodes DMP21D2UFA
+
+        https://www.diodes.com/assets/Datasheets/DMP21D2UFA.pdf
+        """
+
+        model: str = "DMP21D2UFA"
+        library: str = "DMP21D2UFA.spice.txt"
+
+    @dataclass
+    class RZM002P02(BaseSwitch):
+        """ROHM RZM002P02
+
+        https://www.rohm.com/products/mosfets/small-signal/single-pch/rzm002p02-product
+        """
+
+        model: str = "RZM002P02"
+        library: str = "rzm002p02.lib"
+
+    @dataclass
+    class BSS223PW(BaseSwitch):
+        """Infineon BSS 223PW
+
+        https://www.infineon.com/assets/row/public/documents/24/49/infineon-bss223pw-ds-en.pdf
+        """
+
+        model: str = "BSS223PW_L1"
+        library: str = "OptiMOS_p.lib"
+
+    @dataclass
+    class SSM3J36FS(BaseSwitch):
+        """Panasonic SSM3J36FS
+
+        https://toshiba.semicon-storage.com/ap-en/semiconductor/product/mosfets/detail.SSM3J36FS.html
+        """
+
+        r_on: float = 3.6
+
+        model: str = "PMOS_SSM3J36FS"
+        library: str = "SSM3J36FS_PSpice_20160915.lib"
+
+
 class SwitchedComponent:
     """Metaclass for objects that are connected to n number of switches.
     Implements logic to connect, disconnect, and get the current state of each
@@ -94,7 +213,7 @@ class SwitchedComponent:
 
 
 @dataclass
-class BaseCapacitor(SwitchedComponent):
+class BaseCapacitor(SwitchedComponent, SpiceComponent):
     """Initializes capacitor element.
 
 
@@ -119,8 +238,6 @@ class BaseCapacitor(SwitchedComponent):
     _leakage: float = 3e-6
     initial_voltage: float = 0.0
     voltage: float = 0.0
-    model: str = ""
-    library: str = ""
 
     @property
     def energy(self) -> float:
@@ -134,25 +251,8 @@ class BaseCapacitor(SwitchedComponent):
     def leakage(self) -> float:
         return self._leakage
 
-    def library_realpath(self) -> str:
-        """Get the resolved path of the library."""
 
-        file_path = os.path.abspath(__file__)
-        spice_path = os.path.join(os.path.dirname(file_path), "spice")
-        lib_path = os.path.join(spice_path, self.library)
-
-        if not os.path.exists(lib_path):
-            raise FileNotFoundError(f"Library does not exist at {lib_path}")
-
-        return lib_path
-
-    def model_kwargs(self):
-        """Gets kwargs needed for spice model parameters"""
-
-        return {}
-
-
-@dataclass
+@dataclass(kw_only=True)
 class Capacitor(BaseCapacitor):
     """Simplified real capacitor with adjustable characteristics.
 
@@ -178,7 +278,7 @@ class Capacitor(BaseCapacitor):
         }
 
 
-@dataclass
+@dataclass(kw_only=True)
 class IdealCapacitor(BaseCapacitor):
     model: str = "C_ideal"
     library: str = "cap.lib"
@@ -189,7 +289,7 @@ class IdealCapacitor(BaseCapacitor):
         }
 
 
-@dataclass
+@dataclass(kw_only=True)
 class LeacsCapacitor(Capacitor):
     """Leacs style capacitor model.
 
@@ -215,7 +315,7 @@ class VeryLeakyCapacitor(Capacitor):
     leak_floor: float = 3e-6
 
 
-@dataclass
+@dataclass(kw_only=True)
 class CVCapacitor(BaseCapacitor):
     """Capacitor with leakage current dependent on CV.
 
@@ -784,6 +884,7 @@ class CapacitorStorageSimConfig:
         sink: Sink,
         p_lines: int,
         name: str = "",
+        sw: BaseSwitch | None = None,
     ):
         """
         Power lines connect the power source to the sink. This allows for
@@ -799,6 +900,7 @@ class CapacitorStorageSimConfig:
             sink: Power sink
             p_lines: Number of available power lines
             name: Configuration name
+            sw: Switch model
         """
 
         # save parameters
@@ -812,6 +914,11 @@ class CapacitorStorageSimConfig:
         else:
             self.name = f"Config {CapacitorStorageSimConfig.count}"
         CapacitorStorageSimConfig.count += 1
+
+        if sw:
+            self.sw = sw
+        else:
+            self.sw = Switches.IdealSwitch()
 
         # Initialize number of switches
         SwitchedComponent.__init__(src, p_lines)
@@ -1645,6 +1752,18 @@ class CapacitorStorageSim:
             self.config = config
             self.progress = progress
 
+        def _drive_voltage(self, state: int) -> float:
+            """Converts a switch state to drive voltage
+
+            Args:
+                state: Switch state
+
+            Returns
+                Drive voltage
+            """
+
+            return self.config.sw.gate_voltage * (not state)
+
         def get_vsrc_data(self, voltage, time, node, ngspice_id):
             self._logger.debug(
                 f"ngspice_id-{ngspice_id} get_vsrc_data @{time} node {node}"
@@ -1684,15 +1803,15 @@ class CapacitorStorageSim:
                 # Set capacitor switches
                 for idx, cap in enumerate(self.config.caps):
                     if node == f"v_ctrl_pwr{n}_c{idx}":
-                        voltage[0] = cap.state(n)
+                        voltage[0] = self._drive_voltage(cap.state(n))
 
                 # Set source switches
                 if node == f"v_ctrl_src_pwr{n}":
-                    voltage[0] = self.config.src.state(n)
+                    voltage[0] = self._drive_voltage(self.config.src.state(n))
 
                 # Set sink switches
                 if node == f"v_ctrl_pwr{n}_sink":
-                    voltage[0] = self.config.sink.state(n)
+                    voltage[0] = self._drive_voltage(self.config.sink.state(n))
 
             return 0
 
@@ -1767,7 +1886,7 @@ class CapacitorStorageSim:
         self.load_max_r = 1e9
 
     def _create_circuit(self) -> Circuit:
-        """Creates the circuit model.
+        """Creates the circuit model
 
         Returns:
             Circuit model object
@@ -1782,10 +1901,17 @@ class CapacitorStorageSim:
                 circuit.include(cap.library_realpath())
                 included_libraries.append(cap.library_realpath())
 
+        # include switch library
+        sw = self.config.sw
+        circuit.include(sw.library_realpath())
+
+        #
+        # Old not needed
+        #
         # switch model
         # threshold = 1 V
         # on resistance = 1 Ohm
-        circuit.model("S", "SW", vt=1, ron=1)
+        # circuit.model("S", "SW", vt=1, ron=1)
 
         # old input model
         # circuit.V("_src", "v_src_pos", circuit.gnd, "dc 0 external")
@@ -1814,13 +1940,27 @@ class CapacitorStorageSim:
                 circuit.gnd,
                 "dc 0 external",
             )
-            circuit.S(
+
+            #
+            # Old straight through model
+            #
+            # circuit.S(
+            #    f"_src_pwr{n}",
+            #    "src",
+            #    f"pwr{n}",
+            #    f"ctrl_src_pwr{n}_pos",
+            #    circuit.gnd,
+            #    model="S",
+            # )
+
+            # d g s
+            circuit.X(
                 f"_src_pwr{n}",
+                sw.model,
                 "src",
-                f"pwr{n}",
                 f"ctrl_src_pwr{n}_pos",
-                circuit.gnd,
-                model="S",
+                f"pwr{n}",
+                **sw.model_kwargs(),
             )
 
         # capacitor array
@@ -1834,13 +1974,26 @@ class CapacitorStorageSim:
                     circuit.gnd,
                     "dc 0 external",
                 )
-                circuit.S(
+
+                #
+                # Old
+                #
+                # circuit.S(
+                #    f"_pwr{n}_c{idx}",
+                #    f"pwr{n}",
+                #    f"c{idx}_pos",
+                #    f"ctrl_pwr{n}_c{idx}_pos",
+                #    circuit.gnd,
+                #    model="S",
+                # )
+
+                circuit.X(
                     f"_pwr{n}_c{idx}",
-                    f"pwr{n}",
+                    sw.model,
                     f"c{idx}_pos",
                     f"ctrl_pwr{n}_c{idx}_pos",
-                    circuit.gnd,
-                    model="S",
+                    f"pwr{n}",
+                    **sw.model_kwargs(),
                 )
 
             # Ammeter
@@ -1858,13 +2011,26 @@ class CapacitorStorageSim:
                 circuit.gnd,
                 "dc 0 external",
             )
-            circuit.S(
+
+            #
+            # Old
+            #
+            # circuit.S(
+            #    f"_pwr{n}_sink",
+            #    f"pwr{n}",
+            #    "sink",
+            #    f"ctrl_pwr{n}_sink_pos",
+            #    circuit.gnd,
+            #    model="S",
+            # )
+
+            circuit.X(
                 f"_pwr{n}_sink",
+                sw.model,
                 f"pwr{n}",
-                "sink",
                 f"ctrl_pwr{n}_sink_pos",
-                circuit.gnd,
-                model="S",
+                "sink",
+                **sw.model_kwargs(),
             )
 
         # old resistive load
