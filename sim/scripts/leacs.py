@@ -39,7 +39,12 @@ if __name__ == "__main__":
     configs = simulation_config_matrix(
         [IdealCapacitor, CVCapacitor],
         caps,
-        [BonitoSource, BonitoSource, BonitoSource, BonitoSource],
+        [
+            BonitoSource(datapath="/home/mwmaster/catch/"),
+            BonitoSource(datapath="/home/mwmaster/catch/"),
+            BonitoSource(datapath="/home/mwmaster/catch/"),
+            BonitoSource(datapath="/home/mwmaster/catch/")
+        ],
         [
             {"duration": 1200, "downsample": 30000, "name": "node0"},
             {"duration": 1200, "downsample": 30000, "name": "node1"},
