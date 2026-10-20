@@ -114,7 +114,7 @@ class BaseCapacitor(SwitchedComponent):
     """
 
     farads: float
-    v_min: float = 1.7
+    v_min: float = 1.65
     v_max: float = 3.2
     _leakage: float = 3e-6
     initial_voltage: float = 0.0
@@ -558,8 +558,7 @@ class RWSource(Source):
             )
         self.mean = initial_mean
         self.stdev = stdev
-        # self.rng = np.random.default_rng(seed=seed)
-        self.rng = np.random.default_rng()
+        self.rng = np.random.default_rng(seed=seed)
 
         self.power_floor = power_floor
         self.power_roof = power_roof
@@ -572,11 +571,12 @@ class RWSource(Source):
 
     def get_power(self, time: float):
         if time != self.time:
-            delta = self.rng.normal(loc=0.0, scale=self.stdev)
-            if self.mean + delta < self.power_floor:
+            while True:
                 delta = self.rng.normal(loc=0.0, scale=self.stdev)
-            elif self.mean + delta > self.power_roof:
-                delta = self.rng.normal(loc=0.0, scale=self.stdev)
+                if self.mean + delta < self.power_floor or self.mean + delta > self.power_roof:
+                    continue
+                else:
+                    break
             self.mean += delta
             self.time = time
         return self.mean
@@ -1758,7 +1758,7 @@ class CapacitorStorageSim:
         if plotter:
             self.plotter = plotter
         else:
-            self.plotter = SimulationPlotter()
+            self.plotter = SimulationPlotter(layout='individual')
 
         self.shared = self.CustomShared(config, progress, send_data=True)
 
@@ -2189,7 +2189,7 @@ class SimulationRunner:
         if plotter:
             self.plotter = plotter
         else:
-            self.plotter = SimulationPlotter()
+            self.plotter = SimulationPlotter(layout='individual')
 
     def add(self, configs: list[CapacitorStorageSimConfig]):
         """Adds additional simulation configurations to run.

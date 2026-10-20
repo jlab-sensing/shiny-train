@@ -67,133 +67,167 @@ class AssignmentModel:
     A: sp.csr_matrix
     b: np.ndarray
 
-    # Primary objective:
+    # Primary objective (Stage 1):
     #
-    # maximize objective @ z
+    # maximize objective @ z = 1^T M1 z
     #
     # This is the number of assigned tasks.
     objective: np.ndarray
 
-    # P maps z -> tasks-per-capacitor.
+    # M5 maps z -> tasks-per-capacitor (Stage 2 loads).
     #
-    #     loads = P @ z
+    #     loads = M5 @ z
     #
     load_operator: sp.csr_matrix
 
+    # Feasibility mask f = [0_K; f_1; ...; f_N] and assignment costs
+    # d = [0_K; d_1; ...; d_N], both laid out like z.
     f: np.ndarray
-    c: np.ndarray
-    leakage: np.ndarray
+    d: np.ndarray
 
     N: int
     K: int
     M: int
 
+    E_allowed: np.ndarray | None = None
+    energy_constraint: bool = True
+
+    @property
+    def c(self) -> np.ndarray:
+        """Backward-compatible alias for d."""
+        return self.d
+
+
+def assignment_costs(
+    task_power: np.ndarray,
+    task_duration: np.ndarray,
+    caps: list[Capacitor],
+    visits: np.ndarray | None = None,
+    switching: np.ndarray | None = None,
+    kappa: float = 0.01,
+    I0: float = 3e-6,
+) -> np.ndarray:
+    """
+    Task-to-capacitor assignment costs, Eq. (costs), shape (N, K):
+
+        d_ij = n_i (E_i + l_ij + sigma_j)
+
+    with
+        E_i    = task_power_i * task_duration_i                  (J)
+        l_ij   = tau_i V_j max(kappa C_j V_j, I0)                (J), Eq. (leak-bound)
+        n_i    = visits_i (default 1)
+        sigma_j = switching_j (default 0)
+
+    V_j is cap.voltage, the voltage at planning time (V_j^current in the
+    paper). Leakage current falls as the capacitor discharges, so using
+    the planning-time voltage overestimates leakage over the task.
+    """
+
+    task_power = np.asarray(task_power, dtype=float)
+    task_duration = np.asarray(task_duration, dtype=float)
+
+    N = task_power.shape[0]
+    K = len(caps)
+
+    if task_duration.shape != (N,):
+        raise ValueError(f"task_duration must have shape ({N},)... has {task_duration.shape}")
+
+    if visits is None:
+        visits = np.ones(N)
+    visits = np.asarray(visits, dtype=float)
+    if visits.shape != (N,):
+        raise ValueError(f"visits must have shape ({N},)... has {visits.shape}")
+
+    if switching is None:
+        switching = np.zeros(K)
+    switching = np.asarray(switching, dtype=float)
+    if switching.shape != (K,):
+        raise ValueError(f"switching must have shape ({K},)... has {switching.shape}")
+
+    # E_i: energy of one execution of task i.
+    E = task_power * task_duration                                   # (N,)
+
+    # Leakage power bound of capacitor j at its planning-time voltage.
+    leak_power = np.array(
+        [cap.voltage * max(kappa * cap.farads * cap.voltage, I0) for cap in caps]
+    )                                                                # (K,)
+
+    # l_ij = tau_i * leak_power_j
+    l = task_duration[:, np.newaxis] * leak_power[np.newaxis, :]     # (N, K)
+
+    return visits[:, np.newaxis] * (E[:, np.newaxis] + l + switching[np.newaxis, :])
+
+
+def expected_visits(
+    transition: np.ndarray,
+    start: int,
+    depth: int,
+) -> np.ndarray:
+    """
+    One choice of n_i: the expected number of executions of each task in
+    the D + 1 tasks starting at `start` (the task running at the replan
+    plus the next `depth`), for a Markov chain with row-stochastic
+    `transition`. These are expectations; for a worst-case certificate,
+    use the maximum visit count over trajectories instead.
+    """
+
+    transition = np.asarray(transition, dtype=float)
+
+    dist = np.zeros(transition.shape[0])
+    dist[start] = 1.0
+
+    visits = np.zeros_like(dist)
+
+    for _ in range(depth + 1):
+        visits += dist
+        dist = dist @ transition
+
+    return visits
+
 
 def build_operators(N: int, K: int):
-    """Construct M1, M2, M3, M4 and P as sparse matrices."""
+    """
+    Construct M1, ..., M5 as in the paper, all acting on
+    z = [x; y_1; ...; y_N] in R^{K(N+1)} (task-major y block):
 
-    n = K * (N + 1)
+        M1 = [[0_KxK, 0], [0, I_KN]]               extracts y
+        M2 = [[I_K, 0], [0, 0_KNxKN]]              extracts x
+        M3 = [[0_KxK, 0], [1_N (x) I_K, 0_KNxKN]]  replicates x into each y_i
+        M4 = [0_NxK, I_N (x) 1_K^T]                sums y_i per task
+        M5 = [0_KxK, 1_N^T (x) I_K]                counts tasks per capacitor
+    """
 
-    # ------------------------------------------------------------
-    # M1 projects y from z = [x; y].
-    # ------------------------------------------------------------
+    KN = K * N
 
     M1 = sp.block_diag(
-        (
-            sp.csr_matrix((K, K)),
-            sp.eye(K * N, format="csr"),
-        ),
+        (sp.csr_matrix((K, K)), sp.eye(KN, format="csr")),
         format="csr",
     )
-
-    # ------------------------------------------------------------
-    # M2 projects x from z.
-    # ------------------------------------------------------------
 
     M2 = sp.block_diag(
-        (
-            sp.eye(K, format="csr"),
-            sp.csr_matrix((K * N, K * N)),
-        ),
+        (sp.eye(K, format="csr"), sp.csr_matrix((KN, KN))),
         format="csr",
     )
 
-    # ------------------------------------------------------------
-    # M3 replicates x into each assignment block.
-    #
-    # Shape: K(N+1) x K(N+1)
-    # ------------------------------------------------------------
-
-    rows = []
-    cols = []
-    data = []
-
-    for i in range(N):
-        row0 = K + i * K
-
-        for j in range(K):
-            rows.append(row0 + j)
-            cols.append(j)
-            data.append(1.0)
-
-    M3 = sp.coo_matrix(
-        (data, (rows, cols)),
-        shape=(n, n),
-    ).tocsr()
-
-    # ------------------------------------------------------------
-    # M4 = I_N kron 1_K^T
-    #
-    # Shape: N x KN
-    #
-    # Used to enforce:
-    #
-    #     sum_j y_ij <= 1
-    # ------------------------------------------------------------
-
-    M4 = sp.kron(
-        sp.eye(N, format="csr"),
-        np.ones((1, K)),
-        format="csr",
-    )
-
-    # ------------------------------------------------------------
-    # P maps z -> tasks-per-capacitor.
-    #
-    # z = [
-    #     x_0, ..., x_K-1,
-    #     y_00, ..., y_0,K-1,
-    #     y_10, ..., y_1,K-1,
-    #     ...
-    # ]
-    #
-    # P @ z =
-    #
-    #     [
-    #         sum_i y_i0,
-    #         sum_i y_i1,
-    #         ...
-    #         sum_i y_i,K-1
-    #     ]
-    #
-    # Since the y variables are task-major, this is
-    #
-    #     kron(1_N^T, I_K)
-    # ------------------------------------------------------------
-
-    P = sp.hstack(
+    M3 = sp.bmat(
         [
-            sp.csr_matrix((K, K)),
-            sp.kron(
-                np.ones((1, N)),
-                sp.eye(K, format="csr"),
-                format="csr",
-            ),
+            [sp.csr_matrix((K, K)), sp.csr_matrix((K, KN))],
+            [sp.kron(np.ones((N, 1)), sp.eye(K), format="csr"), sp.csr_matrix((KN, KN))],
         ],
         format="csr",
     )
 
-    return M1, M2, M3, M4, P
+    M4 = sp.hstack(
+        [sp.csr_matrix((N, K)), sp.kron(sp.eye(N), np.ones((1, K)), format="csr")],
+        format="csr",
+    )
+
+    M5 = sp.hstack(
+        [sp.csr_matrix((K, K)), sp.kron(np.ones((1, N)), sp.eye(K), format="csr")],
+        format="csr",
+    )
+
+    return M1, M2, M3, M4, M5
 
 
 def build_model(
@@ -202,186 +236,135 @@ def build_model(
     M: int,
     caps: list[Capacitor],
     energy_costs: np.ndarray,
-    leakage: np.ndarray,
-    rewards: np.ndarray | None = None,
+    energy_constraint: bool = True,
+    feasibility_costs: np.ndarray | None = None,
 ) -> AssignmentModel:
     """
-    Build the sparse matrix representation of the assignment problem.
+    Build the sparse matrix representation of Eq. (stage1-cons).
+
+    energy_costs:
+        d_ij of Eq. (costs), shape (N, K). Build it with
+        assignment_costs(...). With visits = 1 and no switching cost this
+        is E_i + l_ij, i.e. what you passed before.
+
+    energy_constraint:
+        True   include the blue per-capacitor energy row (paper default).
+        False  red feasibility row only, i.e. the LEACS-style formulation.
+
+    feasibility_costs:
+        Optional (N, K) costs for Eq. (f) only. None (default) uses d_ij,
+        as the paper is written. With fractional visit counts (n_i < 1),
+        pass the one-execution costs, assignment_costs(..., visits=None),
+        so that f_ij = 1 still means one run of u_i fits in c_j.
     """
 
-    energy_costs = np.asarray(
-        energy_costs,
-        dtype=float,
-    )
-    print("ec: ", energy_costs)
+    d_mat = np.asarray(energy_costs, dtype=float)
 
-    leakage = np.asarray(
-        leakage,
-        dtype=float,
-    )
-    print("leakage: ", leakage)
-
-    if energy_costs.shape != (N,):
-        raise ValueError("energy_costs must have shape (N,)")
-
-    if leakage.shape != (K,):
-        raise ValueError("leakage must have shape (K,)")
+    if d_mat.shape != (N, K):
+        raise ValueError(f"energy_costs must have shape ({N},{K})... has {d_mat.shape}")
 
     # ------------------------------------------------------------
-    # Available energy in each capacitor.
+    # Eq. (e-allowed): usable energy in each capacitor.
     # ------------------------------------------------------------
 
-    E_allowed = np.zeros(K, dtype=float)
-
-    for i, cap in enumerate(caps):
-        E_allowed[i] = cap.farads * (cap.voltage**2 - cap.v_min**2) / 2
-    print("E_allowed: ", E_allowed)
-    # ------------------------------------------------------------
-    # Assignment energy:
-    #
-    #     E_task_i + leakage_j
-    # ------------------------------------------------------------
-
-    assignment_energy = energy_costs[:, np.newaxis] + leakage[np.newaxis, :]
-    print("assignment_energy: ", assignment_energy)
-
-    feasibility = assignment_energy <= E_allowed[np.newaxis, :]
-    print("feas: ", feasibility)
-
-    if feasibility.shape != (N, K):
-        raise ValueError("feasibility must have shape (N, K)")
-
-    if rewards is None:
-        rewards = np.ones(N)
-
-    rewards = np.asarray(
-        rewards,
+    E_allowed = np.array(
+        [cap.farads * (cap.voltage**2 - cap.v_min**2) / 2 for cap in caps],
         dtype=float,
     )
 
-    if rewards.shape != (N,):
-        raise ValueError("rewards must have shape (N,)")
-
-    M1, M2, M3, M4, P = build_operators(N, K)
-
     # ------------------------------------------------------------
-    # z = [x; y]
-    #
-    # x_j = whether capacitor j is selected
-    #
-    # y_ij = whether task i is assigned to capacitor j
+    # Eq. (f): f_ij = 1 iff d_ij <= E_allowed_j. Shape (N, K).
     # ------------------------------------------------------------
 
-    c = np.concatenate(
-        [
-            np.zeros(K),
-            np.repeat(energy_costs, K),
-        ]
-    )
+    f_costs = d_mat if feasibility_costs is None else np.asarray(feasibility_costs, dtype=float)
+
+    if f_costs.shape != (N, K):
+        raise ValueError(f"feasibility_costs must have shape ({N},{K})... has {f_costs.shape}")
+
+    feasibility = f_costs <= E_allowed[np.newaxis, :]
+
+    stranded = np.flatnonzero(~feasibility.any(axis=1))
+    if stranded.size:
+       raise ValueError(f"tasks {stranded.tolist()} fit no capacitor")
+
+    M1, M2, M3, M4, M5 = build_operators(N, K)
 
     # ------------------------------------------------------------
-    # f = [0_K; feasibility]
+    # Block vectors laid out like z = [x; y_1; ...; y_N]. An (N, K)
+    # array flattens task-major with reshape(-1), matching y.
     # ------------------------------------------------------------
 
-    f = np.concatenate(
-        [
-            np.zeros(K),
-            feasibility.reshape(-1),
-        ]
-    )
+    d = np.concatenate([np.zeros(K), d_mat.reshape(-1)])
+    f = np.concatenate([np.zeros(K), feasibility.reshape(-1)])
 
     # ------------------------------------------------------------
-    # Primary objective:
-    #
-    # maximize number of task assignments.
-    #
-    # objective^T z
+    # Eq. (stage1-obj): maximize 1^T M1 z.
     # ------------------------------------------------------------
 
-    objective = np.asarray(np.ones(K * (N + 1)) @ M1).ravel()
+    ones = np.ones(K * (N + 1))
+    objective = np.asarray(ones @ M1).ravel()
 
     # ------------------------------------------------------------
-    # Constraint 1:
-    #
-    #     M4 M1 z <= 1
-    #
-    # Each task is assigned to at most one capacitor.
+    # Eq. (stage1-cons), row by row.
     # ------------------------------------------------------------
 
-    A_task = M4 @ M1[K:, :]
+    # M4 M1 z - 1_N <= 0: each task on at most one capacitor.
+    A_task1 = M4 @ M1
+    b_task1 = np.ones(N)
 
-    b_task = np.ones(N)
+    # M4 M1 z - 1_N >= 0: each task on at least one capacitor.
+    A_task2 = -M4 @ M1
+    b_task2 = -np.ones(N)
 
-    # ------------------------------------------------------------
-    # Constraint 2:
-    #
-    #     (M1 - M3) z <= 0
-    #
-    # y_ij <= x_j
-    # ------------------------------------------------------------
+    # ^^ above two constraints make 1 equality constraint
 
+    # (M1 - M3) z <= 0: y_ij <= x_j.
     A_supply_assignment = M1 - M3
-
     b_supply_assignment = np.zeros(K * (N + 1))
 
-    # ------------------------------------------------------------
-    # Constraint 3:
-    #
-    #     M1 z <= f
-    #
-    # y_ij <= feasibility_ij
-    # ------------------------------------------------------------
-
+    # Red: M1 z - f <= 0: y_ij <= f_ij.
     A_feasibility = M1
-
     b_feasibility = f
 
-    # ------------------------------------------------------------
-    # Constraint 4:
-    #
-    #     sum_j x_j <= M
-    # ------------------------------------------------------------
+    blocks_A = [A_task1, A_task2, A_supply_assignment, A_feasibility]
+    blocks_b = [b_task1, b_task2, b_supply_assignment, b_feasibility]
 
-    supply_count_row = np.ones(K * (N + 1)) @ M2
+    # blocks_A = [A_task1, A_supply_assignment, A_feasibility]
+    # blocks_b = [b_task1, b_supply_assignment, b_feasibility]
 
-    A_supply_count = sp.csr_matrix(supply_count_row)
+    # Blue: M5 diag(d) z - diag(E_allowed) [I_K 0_{K x KN}] z <= 0_K.
+    if energy_constraint:
+        X = sp.hstack(
+            [sp.eye(K, format="csr"), sp.csr_matrix((K, K * N))],
+            format="csr",
+        )
+        A_energy = (M5 @ sp.diags(d)) - (sp.diags(E_allowed) @ X)
 
+        blocks_A.append(A_energy)
+        blocks_b.append(np.zeros(K))
+
+    # 1^T M2 z - M <= 0: at most M capacitors.
+    A_supply_count = sp.csr_matrix(np.asarray(ones @ M2).ravel())
     b_supply_count = np.array([M])
 
-    # ------------------------------------------------------------
-    # Assemble A and b.
-    # ------------------------------------------------------------
+    blocks_A.append(A_supply_count)
+    blocks_b.append(b_supply_count)
 
-    A = sp.vstack(
-        [
-            A_task,
-            A_supply_assignment,
-            A_feasibility,
-            A_supply_count,
-        ],
-        format="csr",
-    )
-
-    b = np.concatenate(
-        [
-            b_task,
-            b_supply_assignment,
-            b_feasibility,
-            b_supply_count,
-        ]
-    )
+    A = sp.vstack(blocks_A, format="csr")
+    b = np.concatenate(blocks_b)
 
     return AssignmentModel(
         A=A,
         b=b,
         objective=objective,
-        load_operator=P,
+        load_operator=M5,
         f=f,
-        c=c,
-        leakage=leakage,
+        d=d,
         N=N,
         K=K,
         M=M,
+        E_allowed=E_allowed,
+        energy_constraint=energy_constraint,
     )
 
 
@@ -809,7 +792,7 @@ def solve_assignment(
 
     optimal_tasks = round(stage1["objective"])
 
-    print(f"Stage 1 optimal assignments: {optimal_tasks}")
+    # print(f"Stage 1 optimal assignments: {optimal_tasks}")
 
     # ------------------------------------------------------------
     # Stage 2
@@ -840,11 +823,11 @@ def solve_assignment(
 
     stage2["wall_time_ms"] = stage1["wall_time_ms"] + stage2["wall_time_ms"]
 
-    print(
-        "Stage 2 selected."
-        f" loads={stage2['capacitor_loads']},"
-        f" load_objective={stage2['load_objective']}"
-    )
+    # print(
+    #     "Stage 2 selected."
+    #     f" loads={stage2['capacitor_loads']},"
+    #     f" load_objective={stage2['load_objective']}"
+    # )
 
     return stage2
 
@@ -856,6 +839,7 @@ class TaskAssigner:
         tasks,
         cap_limit,
         replan_depth,
+        energy_constraint
     ):
         self.caps = caps
         self.tasks = tasks
@@ -863,6 +847,8 @@ class TaskAssigner:
         self.K = len(caps)
         self.M = cap_limit
         self.replan_depth = replan_depth
+        self.energy_constraint = energy_constraint
+        self.task_idx = {t.name: i for i, t in enumerate(tasks)}
 
     def presolve(self):
         # make list of fully-charged cap energies for all caps in self.caps.
@@ -876,29 +862,29 @@ class TaskAssigner:
             c.voltage = cap.v_max
             tmp.append(c)
 
-        leakage = [c.leakage * c.voltage for c in tmp]
-        energy_costs = [t.cost * t.duration for t in self.tasks]
-
+        energy_costs = [
+            [(c.leakage * c.voltage + t.cost) * t.duration for c in tmp] for t in self.tasks
+        ]
         model = build_model(
             N=self.N,
             K=self.K,
             M=self.M,
             caps=tmp,
             energy_costs=energy_costs,
-            leakage=leakage,
+            energy_constraint=self.energy_constraint
         )
         return solve_assignment(model)
 
     def assign(
         self,
         time,
-        floor=3e-6,
     ):
         # c.leakage is current -> p = IV = 0.01*C*V^2
         # c.energy = 0.5 * v**2 * c
         #   ==> p_leak = 0.01 C * V**2 = c.energy / 0.01 / 2
-        leakage = [c.leakage * c.voltage for c in self.caps]
-        energy_costs = [t.cost * t.duration for t in self.tasks]
+        energy_costs = [
+            [(c.leakage * c.voltage + t.cost) * t.duration for c in self.caps] for t in self.tasks
+        ]
 
         model = build_model(
             N=self.N,
@@ -906,14 +892,12 @@ class TaskAssigner:
             M=self.M,
             caps=self.caps,
             energy_costs=energy_costs,
-            leakage=leakage,
+            energy_constraint=self.energy_constraint
         )
 
         return solve_assignment(model)
 
     def should_schedule(self, config=None):
-        # Return True if any capacitor has enough energy for
-        # at least one task.
 
         if config is None:
             return False
@@ -921,36 +905,56 @@ class TaskAssigner:
         if self.replan_depth <= 0:
             return False
 
-        return config.depth == self.replan_depth
+        return not config.depth % self.replan_depth
 
 
 class LeacSimConfig(CapacitorStorageSimConfig):
-    def __init__(self, tasks, cap_limit, initial_cap_idx, replan_depth, **kwargs):
+    def __init__(
+        self,
+        tasks,
+        cap_limit,
+        replan_depth,
+        energy_constraint,
+        **kwargs
+    ):
         super().__init__(**kwargs)
 
         self.cap_limit = cap_limit
 
+        self.assignment = None
+
+        self.assigner = TaskAssigner(
+            self.caps,
+            tasks,
+            cap_limit,
+            replan_depth,
+            energy_constraint
+        )
+
+        result = self.assigner.presolve()
+        self.assignment = result["solution"]
+
         # set initial sm params
+        pairs = self._decode_assignment_result(self.assignment)
         self.sm = self.sink.sm
-        self.sm.cap = self.caps[initial_cap_idx]
+        self.sm.cap = self.caps[pairs[0][0]]
         self.sm.task_start = 0.0
         self.sm.time = 0.0
 
         self.last_substate = None
         self.depth = 0
 
-        self.assignment = None
-
-        self.assigner = TaskAssigner(self.caps, tasks, cap_limit, replan_depth)
-
-        result = self.assigner.presolve()
-        self.assignment = result["solution"]
 
     def callback(self, time: float):
 
+        active_substate, child_substates = self.sm._get_task_state_id()
+
         if self.sm.time == 0.0:
-            for cap in self.caps:
-                cap.connect(0)
+            for i, cap in enumerate(self.caps):
+                if self.assignment is not None:
+                    # the following check evaluates any nonzero as True
+                    if i in np.argwhere(self.assignment[:len(self.caps)]):
+                        cap.connect(0)
 
             self.src.connect(0)
             self.sink.connect(1)
@@ -961,14 +965,23 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         if self.assignment is not None:
             pairs = self._apply_assignment_to_SM(self.assignment)
             assigned_cap_idx = None
-
-            active_substate = self.sm._get_task_state_id()
+            child_cap_idx = []
 
             if active_substate is not None:
-                for cap_idx, task_idx in pairs:
-                    if task_idx == _TASK_IDX[active_substate]:
-                        assigned_cap_idx = cap_idx
-                        break
+                if active_substate == 'sleep' and self.last_substate:
+                    last_task = self.assigner.task_idx[self.last_substate]
+                    for cap_idx, task_idx in pairs:
+                        if task_idx == last_task:
+                            child_cap_idx.append(cap_idx)
+                elif active_substate == 'sleep' and not self.last_substate:
+                    measure = self.assigner.task_idx['measure']
+                    child_cap_idx.extend(c for c, t in pairs if t == measure)
+                else:
+                    for cap_idx, task_idx in pairs:
+                        if task_idx == self.assigner.task_idx[active_substate]:
+                            assigned_cap_idx = cap_idx
+                        elif task_idx in child_substates:
+                            child_cap_idx.append(cap_idx)
 
             if self.last_substate and active_substate != self.last_substate:
                 self.depth += 1
@@ -979,20 +992,25 @@ class LeacSimConfig(CapacitorStorageSimConfig):
                 if i == assigned_cap_idx:
                     cap.disconnect(0)
                     cap.connect(1)
-
-                else:
-                    cap.disconnect(1)
+                elif i in child_cap_idx:
                     cap.connect(0)
+                    cap.disconnect(1)
+                else:
+                    cap.disconnect(0)   # unselected caps never sit on the charge line
+                    cap.disconnect(1)
 
         # Solve a new assignment when scheduling
         # becomes possible.
         if self.assigner.should_schedule(self):
-            result = self.assigner.assign(time)
+            try:
+                result = self.assigner.assign(time)
+            except ValueError:                      # some task fits no capacitor now
+               result = None
+            if result is not None and result["status"] in ("OPTIMAL", "FEASIBLE"):
+               self.assignment = result["solution"]
 
-            self.assignment = result["solution"]
-            self.depth = 0  # reset the replan counter
-
-        self.last_substate = active_substate
+        if active_substate != 'sleep':
+            self.last_substate = active_substate
         self._update_sink()
 
     def _decode_assignment_result(
@@ -1039,7 +1057,6 @@ class LeacSimConfig(CapacitorStorageSimConfig):
             for cap_idx in range(K)
             if y[task_idx, cap_idx] >= threshold
         ]
-
         return pairs
 
     def _apply_assignment_to_SM(
@@ -1048,21 +1065,20 @@ class LeacSimConfig(CapacitorStorageSimConfig):
     ):
         pairs = self._decode_assignment_result(assignment)
 
-        active_substate = self.sm._get_task_state_id()
-
-        if active_substate is not None:
+        active_substate, _ = self.sm._get_task_state_id()
+        if active_substate not in (None, 'sleep'):
             for cap_idx, task_idx in pairs:
-                if task_idx == _TASK_IDX[active_substate]:
+                if task_idx == self.assigner.task_idx[active_substate]:
                     if self.caps[cap_idx].voltage > self.caps[cap_idx].v_min:
                         self.sm.cap = self.caps[cap_idx]
 
-                        print(
-                            f"{self.sm.time:.6f}: "
-                            f"{active_substate}, "
-                            f"Cap{cap_idx} "
-                            f"Volts:"
-                            f"{self.sm.cap.voltage:.6f}"
-                        )
+                        # print(
+                        #     f"{self.sm.time:.6f}: "
+                        #     f"{active_substate}, "
+                        #     f"Cap{cap_idx} "
+                        #     f"Volts:"
+                        #     f"{self.sm.cap.voltage:.6f}"
+                        # )
 
                     break
 
@@ -1081,6 +1097,7 @@ class LeacSimConfig(CapacitorStorageSimConfig):
 if __name__ == "__main__":
     M = 2
     replan_depth = 3
+    energy_constraint = True
 
     CONST_VOLTAGE = 3.3
 
@@ -1099,7 +1116,7 @@ if __name__ == "__main__":
     src = SineSource(
         1.70e-2,
         1.70e-2,
-        2.00,
+        0.50,
         0.00,
         duration=100,
         dt=0.01,
@@ -1110,7 +1127,7 @@ if __name__ == "__main__":
     caps = [
         LeacsCapacitor(
             c,
-            v_min=0.1,
+            v_min=1.7,
             v_max=3.2,
         )
         for c in cap_values
@@ -1124,7 +1141,17 @@ if __name__ == "__main__":
 
     sink = SMSink(init_MTRSinkSM(caps[0]))
 
-    config = LeacSimConfig(tasks, M, 0, replan_depth, src=src, caps=caps, sink=sink, p_lines=2)
+    config = LeacSimConfig(
+        tasks,
+        M,
+        0,
+        replan_depth,
+        energy_constraint,
+        src=src,
+        caps=caps,
+        sink=sink,
+        p_lines=2
+    )
 
     sim = CapacitorStorageSim(config)
 

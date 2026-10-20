@@ -24,7 +24,7 @@ def create_tasks() -> list:
         Task(cost=11.68e-4 * CONST_VOLTAGE, duration=0.511, name="measure"),
         Task(cost=2 * 11.68e-4 * CONST_VOLTAGE, duration=0.511, name="analyze"),
         Task(cost=86.52e-4 * CONST_VOLTAGE, duration=0.285, name="tx"),
-        Task(cost=20.03e-4 * CONST_VOLTAGE, duration=0.937, name="rx"),
+        Task(cost=20.03e-4 * CONST_VOLTAGE, duration=0.927, name="rx"),
     ]
 
     return tasks
@@ -38,49 +38,84 @@ if __name__ == "__main__":
     ]
 
     configs = simulation_config_matrix(
-        [IdealCapacitor, CVCapacitor],
+        [CVCapacitor],
         caps,
-        # [BonitoSource, BonitoSource, BonitoSource, BonitoSource],
-        [RWSource]*100,
-        # [
-        #     {"duration": 1200, "downsample": 30000, "name": "node0"},
-        #     {"duration": 1200, "downsample": 30000, "name": "node1"},
-        #     {"duration": 1200, "downsample": 30000, "name": "node2"},
-        #     {"duration": 1200, "downsample": 30000, "name": "node3"},
-        # ],
+        [BonitoSource, BonitoSource, BonitoSource, BonitoSource],
+        # [RWSource],
         [
-            {"duration": 1000, "dt":1}
-        ]*100,
+            {"duration": 1200, "downsample": 10000, "name": "node0"},
+            {"duration": 1200, "downsample": 10000, "name": "node1"},
+            {"duration": 1200, "downsample": 10000, "name": "node2"},
+            {"duration": 1200, "downsample": 10000, "name": "node3"},
+        ],
+        # [
+        #     {
+        #         "duration": 200,
+        #         "dt":0.01
+        #     }
+        # ],
         [SMSink],
         {"sink": MATRSinkSM()},
-        [LeacSimConfig, LeacSimConfig],
-        [
-            {
-                "p_lines": 2,
-                "tasks": create_tasks(),
-                "cap_limit": 2,
-                "initial_cap_idx": 0,
-                "replan_depth": 3,
-            },
-            {
-                "p_lines": 2,
-                "tasks": create_tasks(),
-                "cap_limit": 2,
-                "initial_cap_idx": 0,
-                "replan_depth": -1,
-            }
-        ],
-        # names=[
-        #     "Ideal/node0",
-        #     "Ideal/node1",
-        #     "Ideal/node2",
-        #     "Ideal/node3",
-        #     "CV/node0",
-        #     "CV/node1",
-        #     "CV/node2",
-        #     "CV/node3",
+        # [LeacSimConfig,LeacSimConfig,LeacSimConfig,LeacSimConfig],
+        [LeacSimConfig],
+        # [
+        #     {
+        #         "p_lines": 2,
+        #         "tasks": create_tasks(),
+        #         "cap_limit": 2,
+        #         "replan_depth": -1,
+        #         "energy_constraint": False
+        #     },
+        #     {
+        #         "p_lines": 2,
+        #         "tasks": create_tasks(),
+        #         "cap_limit": 2,
+        #         "replan_depth": -1,
+        #         "energy_constraint": True
+        #     },
+        #     {
+        #         "p_lines": 2,
+        #         "tasks": create_tasks(),
+        #         "cap_limit": 2,
+        #         "replan_depth": 1,
+        #         "energy_constraint": True
+        #     },
+        #     {
+        #         "p_lines": 2,
+        #         "tasks": create_tasks(),
+        #         "cap_limit": 2,
+        #         "replan_depth": 2,
+        #         "energy_constraint": True
+        #     },
         # ],
-        names=[f"Ideal/node{i}" for i in range(100)] + [f"CV/node{i}" for i in range(100)],
+        {
+            "p_lines": 2,
+            "tasks": create_tasks(),
+            "cap_limit": 2,
+            # "replan_depth": 2,
+            "replan_depth": -1,
+            "energy_constraint": False
+        },
+        # names=[
+        #     "none/node0",
+        #     "none/node1",
+        #     "none/node2",
+        #     "none/node3",
+        #     "ec/node0",
+        #     "ec/node1",
+        #     "ec/node2",
+        #     "ec/node3",
+        #     "rp/node0",
+        #     "rp/node1",
+        #     "rp/node2",
+        #     "rp/node3",
+        #     "ecrp/node0",
+        #     "ecrp/node1",
+        #     "ecrp/node2",
+        #     "ecrp/node3",
+        # ],
+        names=[f"LEACS/src{i}" for i in range(4)],
+        # names=[f"Thimble/src{i}" for i in range(4)],
     )
 
     runner = SimulationRunner(configs)
