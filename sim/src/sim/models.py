@@ -871,12 +871,15 @@ class SimulationResults:
         self.from_analysis(analysis, config)
 
 
-    def save(self, path: str):
+    def save(self, path: str = ""):
         """Save results to a path.
 
         Args:
             path: Save path.
         """
+
+        if not path:
+            path = self.name
 
         directory = os.path.dirname(path)
         if directory:
@@ -1185,6 +1188,17 @@ class SimulationPlotter:
             raise NotImplementedError(f"Figure {name} is not implemented in the layout")
 
         return self.figs[name]
+
+    def plot(self, results: list[SimulationResults]):
+        """Plot results
+
+        Args:
+            results: List of simulation results
+        """
+
+        self.plot_multiple_ts(results)
+        self.plot_final(results)
+
 
     def plot_single_ts(self, res: SimulationResults):
         """Plots single simulation results on new figure.
