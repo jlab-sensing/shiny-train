@@ -995,7 +995,7 @@ class SimulationResults:
         self.src_energy = self._get_src_energy(analysis)[-1]
         self.sink_energy = self._get_sink_energy(analysis)[-1]
         self.diff_energy = self._get_diff_energy(analysis)[-1]
-        self.cap_energy = self._get_sum_cap_energy(analysis)[-1]
+        self.cap_energy = self._get_final_cap_energy(analysis)
 
     def _get_src_energy(self, analysis) -> ArrayLike:
         """Get source energy at each timestep.
@@ -1037,13 +1037,16 @@ class SimulationResults:
         return np.asarray(energy)
 
     def _get_diff_energy(self, analysis) -> ArrayLike:
-        """Get difference between source and sink energy.
+        """Get difference between source, sink, and capacitor.
 
         Returns:
             Cumulative sum of energy at each timestep.
         """
 
-        diff = self._get_src_energy(analysis) - self._get_sink_energy(analysis)
+        diff = self._get_src_energy(analysis)
+        diff -= self._get_sink_energy(analysis)
+        diff -= self._get_sum_cap_energy(analysis)
+
         return diff
 
     def _get_cap_energy(self, analysis) -> list[ArrayLike]:
@@ -1075,6 +1078,19 @@ class SimulationResults:
         total_energy = np.sum(energy_list, axis=0)
 
         return total_energy
+
+    def _get_final_cap_energy(self, analysis) -> ArrayLike:
+        """Get the sum of energy in all capacitors.
+
+        Returns:
+            Energy at each timestamp.
+        """
+
+        energy_list = self._get_cap_energy(analysis)
+
+        final_energy = np.sum([arr[-1] for arr in energy_list])
+
+        return final_energy
 
 
 class SimulationPlotter:
@@ -1536,56 +1552,62 @@ class SimulationPlotter:
 
         self._plot_final_energy(self.get_fig("final_energy"), results)
 
+
+
     def _plot_final_energy(self, fig: Figure, results: list[SimulationResults]):
-        # keys in results.ts to plot, in bar order
-        keys = ["e_src", "e_sink", "e_diff", "e_sum_caps"]
-        n_groups = len(results)
-        n_bars = len(keys)
-
-        names = [res.name for res in results]
-
-        # Okabe-Ito palette: designed to be distinguishable under the
-        # common forms of color vision deficiency
-        colors = [
-            "#0072B2",
-            "#E69F00",
-            "#009E73",
-            "#CC79A7",
-            "#56B4E9",
-            "#D55E00",
-            "#F0E442",
-            "#000000",
-        ]
-        hatches = ["", "//", "..", "xx", "\\\\", "++", "oo", "--"]
-
-        x = np.arange(n_groups)
-        width = 0.8 / n_bars  # total group width of 0.8
-
         ax = fig.subplots()
 
-        for i, key in enumerate(keys):
-            # final value of each run's time series
-            values = [r.ts[key][-1] for r in results]
-            # Offset so the bars in each group are centered on the tick
-            offset = (i - (n_bars - 1) / 2) * width
-            bars = ax.bar(
-                x + offset,
-                values,
-                width,
-                label=key,
-                color=colors[i % len(colors)],
-                hatch=hatches[i % len(hatches)],
-                edgecolor="black",
-                linewidth=0.8,
-            )
-            ax.bar_label(bars, fmt="%.2g", padding=2, fontsize=8)
+        # Okabe-Ito colorblind-safe palette
+
+        colors = {
+            "Source":    "tab:blue",
+            "Sinked":    "tab:orange",
+            "Remaining": "tab:green",
+            "Lost":      "tab:red",
+        }
+        hatches = {
+            "Source":    "",
+            "Sinked":    "",
+            "Remaining": "//",
+            "Lost":      "..",
+        }
+        bar_style = {
+            "edgecolor": "black",
+            "linewidth": 0.6,
+        }
+
+        run_names = [res.name for res in results]
+        x = np.arange(len(run_names))
+        width = 0.35
+        gap = 0.0
+        offset = (width + gap) / 2
+
+        src = np.array([res.src_energy for res in results])
+        sink_energies = {
+            "Sinked":    np.array([res.sink_energy for res in results]),
+            "Remaining": np.array([res.cap_energy  for res in results]),
+            "Lost":      np.array([res.diff_energy for res in results]),
+        }
+
+        ax.bar(x - offset, src, width, label="Source",
+               color=colors["Source"], hatch=hatches["Source"], **bar_style)
+
+        bottom = np.zeros(len(results))
+        for label, energy in sink_energies.items():
+            ax.bar(x + offset, energy, width, bottom=bottom, label=label,
+                   color=colors[label], hatch=hatches[label], **bar_style)
+            bottom += energy
 
         ax.set_xticks(x)
-        ax.set_xticklabels(names)
+        ax.set_xticklabels(run_names)
         ax.set_ylabel("Energy (J)")
-        ax.set_title("Final Energy")
-        ax.axhline(0, color="black", linewidth=0.8)  # diff can be negative
+        ax.axhline(0, color="black", linewidth=0.8)
+
+        # Clean, publication-style axes
+        ax.tick_params(direction="out")
         ax.legend()
+
+
 
     def show(self):
         plt.show(block=False)
@@ -2189,7 +2211,7 @@ class SimulationRunner:
         if plotter:
             self.plotter = plotter
         else:
-            self.plotter = SimulationPlotter(layout='individual')
+            self.plotter = SimulationPlotter()
 
     def add(self, configs: list[CapacitorStorageSimConfig]):
         """Adds additional simulation configurations to run.
