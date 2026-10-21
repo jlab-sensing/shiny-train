@@ -13,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from multiprocessing import Manager, Pool
 from queue import Queue
+import pickle
 
 import h5py
 
@@ -853,7 +854,7 @@ class SimulationResults:
 
     def __init__(
         self,
-        ts: dict | None = None,
+        analysis: TransientAnalysis,
         config: CapacitorStorageSimConfig | None = None,
     ):
         """Initialize results.
@@ -863,33 +864,43 @@ class SimulationResults:
         plotter.
 
         Args:
-            ts: Simulation timeseries data
+            analysis: Results from pyspice transient simulation
             config: Simulation config
         """
 
-        # Sve for later
+        self.from_analysis(analysis, config)
 
-        # src_energy: Energy produced from the source.
-        # sink_energy: Energy consumed by the sink.
-        # diff_energy: Difference between produce and consumed energy.
-        # cap_energy: Energy remaining in capacitor.
 
-        # src_energy: float = 0.0,
-        # sink_energy: float = 0.0,
-        # diff_energy: float = 0.0,
-        # cap_energy: float = 0.0,
+    def save(self, path: str):
+        """Save results to a path.
 
-        # self.src_energy = src_energy
-        # self.sink_energy = sink_energy
-        # self.diff_energy = diff_energy
-        # self.cap_energy = cap_energy
+        Args:
+            path: Save path.
+        """
 
-        if ts:
-            self.ts = ts
-        else:
-            self.ts = {}
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
 
-        self._parse_config(config)
+        with open(path, "wb") as f:
+            pickle.dump(self, f)
+
+
+    @staticmethod
+    def load(path: str) -> SimulationResults:
+        """Load results from a path.
+
+        Returns an instance of an object from a saved binary.
+
+        Args:
+            Load path
+
+        Returns:
+            Loaded object instance.
+        """
+
+        with open(path, "rb") as f:
+            return pickle.load(f)
 
     def _parse_config(self, config: CapacitorStorageSimConfig | None = None):
         """Stores attributes from config to ensure objects are picklable.
@@ -1985,8 +1996,7 @@ class CapacitorStorageSim:
         analysis = self._simulate(circuit)
 
         # Calculate results
-        results = SimulationResults()
-        results.from_analysis(analysis, self.config)
+        results = SimulationResults(analysis, self.config)
 
         # save to class
         self.circuit = circuit
@@ -2290,6 +2300,42 @@ class SimulationRunner:
         self.results = results
 
         return results
+
+
+    def save(self, directory: str):
+        """Save collection of results to directory.
+
+        Args:
+            directory: Directory containing pickles
+        """
+
+        os.makedirs(directory, exist_ok=True)
+
+        for res in self.results:
+            path = os.path.join(directory, res.name)
+            res.save(path)
+
+
+    @staticmethod
+    def load(directory: str) -> list[SimulationResults]:
+        """Load collection of results from a directory.
+
+        Args:
+            directory: Directory containing pickles
+
+        Returns:
+            List of simulation results
+        """
+
+        results = []
+        for root, _, files in os.walk(directory):
+            for f in files:
+                path = os.path.join(root, f)
+                res = SimulationResults.load(path)
+                results.append(res)
+
+        return results
+
 
     def _run_sim(
         self, idx: int, config: CapacitorStorageSimConfig, queue: Queue
