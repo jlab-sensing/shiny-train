@@ -774,6 +774,52 @@ class SMSink(Sink):
         return self.sm.load_value
 
 
+class Event:
+    """Label in time for results.
+
+    All objects stored in this class MUST be able to be pickled.
+    """
+
+    def __init__(
+            self,
+            name: str,
+            time: float,
+            ignore: bool = False,
+            failed: bool = True
+    ):
+        """Initialize a results label with a name and time.
+
+        Args:
+            name: Name of event
+            time: Time the event happened
+        """
+
+        self.name = name
+        self.time = time
+        self.ignore = ignore
+        self.failed = failed
+
+    def __eq__(self, other: object) -> bool:
+        """Check that the names are equal."""
+
+        if not isinstance(other, Event):
+            return NotImplemented
+        return self.name == other.name
+
+    def __hash__(self) -> int:
+        """Has based on the name."""
+
+        return hash(self.name)
+
+    def __lt__(self, other: "Event") -> bool:
+        """Comparison is done based on time."""
+
+        if not isinstance(other, Event):
+            return NotImplemented
+        return self.time < other.time
+
+
+
 class CapacitorStorageSimConfig:
     # number of config objects
     count = 0
@@ -837,7 +883,7 @@ class CapacitorStorageSimConfig:
 
         return [c.farads for c in self.caps]
 
-    def callback(self, time: float):
+    def callback(self, time: float) -> list[Event]:
         """Callback function to perform actions during sim runtime.
 
         This function should be overwritten by the user.
@@ -846,7 +892,7 @@ class CapacitorStorageSimConfig:
             time: Timestep of simulation
         """
 
-        return
+        return []
 
 
 class SimulationResults:
@@ -856,6 +902,7 @@ class SimulationResults:
         self,
         analysis: TransientAnalysis,
         config: CapacitorStorageSimConfig | None = None,
+        events: list[Event] | None = None,
     ):
         """Initialize results.
 
@@ -868,7 +915,21 @@ class SimulationResults:
             config: Simulation config
         """
 
-        self.from_analysis(analysis, config)
+        if config:
+            self._parse_config(config)
+        else:
+            self.caps: list[Capacitor] = []
+            self.p_lines = 0
+            self.farads: list[float] = []
+            self.name = ""
+
+        self.ts: dict = {}
+        self.from_analysis(analysis)
+
+        if events:
+            self.events = events
+        else:
+            self.events = []
 
 
     def save(self, path: str = ""):
@@ -905,23 +966,18 @@ class SimulationResults:
         with open(path, "rb") as f:
             return pickle.load(f)
 
-    def _parse_config(self, config: CapacitorStorageSimConfig | None = None):
+    def _parse_config(self, config: CapacitorStorageSimConfig):
         """Stores attributes from config to ensure objects are picklable.
 
         Args:
             config: Simulation config
         """
 
-        if config:
-            self.caps = config.caps
-            self.p_lines = config.p_lines
-            self.farads = config.farads()
-            self.name = config.name
-        else:
-            self.caps = []
-            self.p_lines = 0
-            self.farads = []
-            self.name = ""
+        self.caps = config.caps
+        self.p_lines = config.p_lines
+        self.farads = config.farads()
+        self.name = config.name
+
 
     def get_slice(self) -> "SimulationResults":
         """Get a slice of the results.
@@ -939,7 +995,6 @@ class SimulationResults:
     def from_analysis(
         self,
         analysis: TransientAnalysis,
-        config: CapacitorStorageSimConfig | None = None,
     ):
         """Updates values from the analysis of a simulation.
 
@@ -948,12 +1003,12 @@ class SimulationResults:
 
         It is important that the analysis is not stored in this class.
 
+        The function `_parse_config` is required to parse the configuration and
+        set the internal parameters.
+
         Args:
             analysis: Results from pyspice transient simulation
-            config: Simulation config.
         """
-
-        self._parse_config(config)
 
         self.ts = {}
 
@@ -1145,6 +1200,9 @@ class SimulationPlotter:
 
             fin_fig = plt.figure()
 
+            event_fig = plt.figure()
+            event_subfigs = event_fig.subfigures(1, 3)
+
             figs = {
                 "input_output": ts_subfigs[0][0],
                 "power_lines": ts_subfigs[0][1],
@@ -1157,6 +1215,9 @@ class SimulationPlotter:
                 "energy": ts_subfigs[3][0],
                 "cap_energy": ts_subfigs[3][1],
                 "final_energy": fin_fig,
+                "event_vertical": event_subfigs[0],
+                "event_shaded": event_subfigs[1],
+                "event_line": event_subfigs[2],
             }
 
         else:
@@ -1226,6 +1287,9 @@ class SimulationPlotter:
         self._plot_energy(self.get_fig("energy"), results)
         self._plot_cap_energy(self.get_fig("cap_energy"), results)
         self._plot_cap_current(self.get_fig("cap_current"), results)
+        self._plot_event_vertical(self.get_fig("event_vertical"), results)
+        self._plot_event_shaded(self.get_fig("event_shaded"), results)
+        self._plot_event_line(self.get_fig("event_line"), results)
 
     def _plot_capacitors(
         self,
@@ -1634,6 +1698,118 @@ class SimulationPlotter:
 
 
 
+    def _plot_event_vertical(self, fig: Figure, results: list[SimulationResults]):
+        """Plots vertical lines at each event.
+        """
+
+        num_plots = len(results)
+        axs = fig.subplots(num_plots, 1, sharex=True)
+
+        colors: dict[str, str] = {}
+        for ax, result in zip(axs, results):
+            seen = set()
+            for event in result.events:
+                # sets the color if it does not exist
+                color = colors.setdefault(event.name, f"C{len(colors)}")
+                label = event.name if event.name not in seen else None
+                ax.axvline(x=event.time, label=label, color=color)
+                seen.add(event.name)
+
+            ax.set_ylabel(result.name)
+
+
+        for ax in axs:
+            # remove ticks
+            ax.set_yticks([])
+
+            ax.grid()
+            ax.legend()
+
+        axs[0].set_xlabel("Time (s)")
+
+    def _plot_event_shaded(self, fig: Figure, results: list[SimulationResults]):
+        """Plots shaded regions in time between events.
+        """
+
+        num_plots = len(results)
+        axs = fig.subplots(num_plots, 1, sharex=True)
+
+        colors: dict[str, str] = {}
+        for ax, result in zip(axs, results):
+            seen = set()
+            events = sorted(result.events)
+
+            for start, end in zip(events, events[1:]):
+                # skip if flagged to ignore
+                if start.ignore:
+                    continue
+
+                color = colors.setdefault(start.name, f"C{len(colors)}")
+                label = start.name if start.name not in seen else None
+                ax.axvspan(start.time, end.time, color=color, alpha=0.3, label=label)
+                seen.add(start.name)
+
+            ax.set_ylabel(result.name)
+
+        for ax in axs:
+            # remove ticks
+            ax.set_yticks([])
+
+
+            ax.grid(axis="x")
+            ax.legend()
+
+        axs[0].set_xlabel("Time (s)")
+
+
+
+    def _plot_event_line(self, fig: Figure, results: list[SimulationResults]):
+        """Plot lines between events with color-coded markers at each transition."""
+
+        num_plots = len(results)
+        axs = fig.subplots(num_plots, 1, sharex=True, sharey=True, squeeze=False)[:, 0]
+
+        # Discrete level and color per event name, shared across all subplots
+        levels: dict[str, int] = {}
+        for result in results:
+            for event in sorted(result.events):
+                levels.setdefault(event.name, len(levels))
+        colors = {name: f"C{i}" for name, i in levels.items()}
+
+        for ax, result in zip(axs, results):
+            events = sorted(result.events)
+
+            # Connecting line drawn first, underneath the markers
+            ax.plot(
+                [e.time for e in events],
+                [levels[e.name] for e in events],
+                color="lightgray",
+                zorder=1,
+            )
+
+            # One scatter call per name gives one legend entry per name
+            for name, level in levels.items():
+                times = [e.time for e in events if e.name == name]
+                if not times:
+                    continue
+                ax.scatter(
+                    times,
+                    [level] * len(times),
+                    color=colors[name],
+                    label=name,
+                    s=50,
+                    zorder=3,
+                )
+
+            ax.set_ylabel(result.name)
+            ax.grid(axis="x")
+            ax.legend()
+
+        # sharey=True, so setting ticks on the first axes applies to all
+        axs[0].set_yticks(list(levels.values()), labels=list(levels.keys()))
+        axs[0].set_ylim(-0.5, len(levels) - 0.5)
+        axs[0].set_xlabel("Time (s)")
+
     def show(self):
         plt.show(block=False)
         input("Press enter to close figures...")
@@ -1691,6 +1867,7 @@ class CapacitorStorageSim:
             super().__init__(**kwargs)
             self.config = config
             self.progress = progress
+            self.events: list[Event] = []
 
         def get_vsrc_data(self, voltage, time, node, ngspice_id):
             self._logger.debug(
@@ -1774,7 +1951,9 @@ class CapacitorStorageSim:
             time = data["time"].real
 
             # uesr defined callback
-            self.config.callback(time)
+            events = self.config.callback(time)
+            if events:
+                self.events += events
 
             # progress callback
             if self.progress:
@@ -1805,7 +1984,7 @@ class CapacitorStorageSim:
         if plotter:
             self.plotter = plotter
         else:
-            self.plotter = SimulationPlotter(layout='individual')
+            self.plotter = SimulationPlotter()
 
         self.shared = self.CustomShared(config, progress, send_data=True)
 
@@ -1968,7 +2147,17 @@ class CapacitorStorageSim:
 
         return circuit
 
-    def _simulate(self, circuit: Circuit, end_time: float = 2.0):
+    def _simulate(self, circuit: Circuit, end_time: float = 2.0) -> tuple:
+        """Run the simulation and get the results.
+
+        Args:
+            circuit: Spice circuit
+            end_time: Simulation duration
+
+        Returns:
+            Tuple with PySpice analysis and events during the simulation.
+        """
+
         self.simulator = circuit.simulator(
             temperature=25,
             nominal_temperature=25,
@@ -1996,7 +2185,7 @@ class CapacitorStorageSim:
             use_initial_condition=True,
         )
 
-        return analysis
+        return analysis, self.shared.events
 
     def run(self, end_time: float = 2.0) -> SimulationResults:
         """Run the simulation on a set of capacitor values.
@@ -2007,10 +2196,10 @@ class CapacitorStorageSim:
         """
 
         circuit = self._create_circuit()
-        analysis = self._simulate(circuit)
+        analysis, events = self._simulate(circuit)
 
         # Calculate results
-        results = SimulationResults(analysis, self.config)
+        results = SimulationResults(analysis, self.config, events)
 
         # save to class
         self.circuit = circuit
