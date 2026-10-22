@@ -867,7 +867,7 @@ class SimulationResults:
             config: Simulation config
         """
 
-        # Sve for later
+        # Save for later
 
         # src_energy: Energy produced from the source.
         # sink_energy: Energy consumed by the sink.
@@ -1758,7 +1758,7 @@ class CapacitorStorageSim:
         if plotter:
             self.plotter = plotter
         else:
-            self.plotter = SimulationPlotter(layout='individual')
+            self.plotter = SimulationPlotter()
 
         self.shared = self.CustomShared(config, progress, send_data=True)
 
@@ -2189,7 +2189,7 @@ class SimulationRunner:
         if plotter:
             self.plotter = plotter
         else:
-            self.plotter = SimulationPlotter(layout='individual')
+            self.plotter = SimulationPlotter()
 
     def add(self, configs: list[CapacitorStorageSimConfig]):
         """Adds additional simulation configurations to run.

@@ -1,36 +1,30 @@
 """
-Matrix-form assignment model using HiGHS.
+Matrix-form assignment model, solved with SCIP.
 
-The mathematical model is
+All modes share the constraint set A z <= b of Eq. (stage1-cons): each task on
+exactly one capacitor (the equality, as two inequality rows), y_ij <= x_j,
+y_ij <= f_ij, sum_j x_j <= M, and optionally the cumulative energy row.
 
-    Stage 1:
-        maximize    ones^T z
-        subject to  A z <= b
-                    z in {0,1}^n
+solver (toggle per TaskAssigner / LeacSimConfig):
 
-    Stage 2:
-        minimize    z^T Q z
-        subject to  A z <= b
-                    ones^T z == T*
-                    z in {0,1}^n
+    "lp"     LEACS MILP (Eqs. 4-7):   maximize 1^T M1 z  s.t. A z <= b
+             Under the equality every feasible plan scores N, so this is a
+             feasibility solve: the plan is whichever feasible point SCIP
+             finds. LEACS ranks feasible plans by trace replay; that ranking
+             is not part of this solve.
 
-where
+    "qp"     Thimble, one solve:      minimize ||P z||^2  s.t. A z <= b
 
-    Q = P^T P
+    "lp+qp"  the original lexicographic program: the LP, then the QP with
+             1^T M1 z fixed at the LP optimum. Same optimal set as "qp" under
+             the equality; kept for ablation.
 
-and P maps the assignment vector z to the number of tasks assigned
-to each capacitor.
+qp_weighting (operator P in the QP objective):
 
-Thus
-
-    P z = [load_0, load_1, ..., load_{K-1}]
-
-and
-
-    z^T P^T P z = sum_j load_j^2.
-
-Stage 1 guarantees the maximum number of executable tasks.
-Stage 2 distributes those tasks as evenly as possible across capacitors.
+    "unweighted"  P = M5               tasks per capacitor
+    "weighted"    P = M5 diag(d) / s   energy per capacitor, d_ij of Eq. (costs),
+                                       s = max_ij d_ij (scaling leaves the
+                                       minimizer unchanged; see build_model)
 """
 
 from __future__ import annotations
@@ -53,9 +47,16 @@ from .models import (
     LeacsCapacitor,
     SMSink,
 )
-from .state_machines import Task, init_MTRSinkSM
+from .state_machines import Task, MATRSinkSM, init_MTRSinkSM
 
-_TASK_IDX = {"measure": 0, "analyze": 1, "tx": 2, "rx": 3}
+SOLVERS = ("lp", "qp", "lp+qp")
+QP_WEIGHTINGS = ("unweighted", "weighted")
+_OK = ("OPTIMAL", "FEASIBLE")
+
+
+def tasks_from_sm(sm_cls=MATRSinkSM) -> list[Task]:
+    """Planner tasks read from the state machine, so the two cannot drift."""
+    return [getattr(sm_cls.task, name).value for name in sm_cls.TASK_NAMES]
 
 
 @dataclass
@@ -74,10 +75,8 @@ class AssignmentModel:
     # This is the number of assigned tasks.
     objective: np.ndarray
 
-    # M5 maps z -> tasks-per-capacitor (Stage 2 loads).
-    #
-    #     loads = M5 @ z
-    #
+    # P maps z -> per-capacitor loads for the QP objective ||P z||^2:
+    # M5 (tasks per capacitor) or M5 diag(d) / s (energy per capacitor).
     load_operator: sp.csr_matrix
 
     # Feasibility mask f = [0_K; f_1; ...; f_N] and assignment costs
@@ -91,6 +90,7 @@ class AssignmentModel:
 
     E_allowed: np.ndarray | None = None
     energy_constraint: bool = True
+    qp_weighting: str = "unweighted"
 
     @property
     def c(self) -> np.ndarray:
@@ -238,6 +238,7 @@ def build_model(
     energy_costs: np.ndarray,
     energy_constraint: bool = True,
     feasibility_costs: np.ndarray | None = None,
+    qp_weighting: str = "unweighted",
 ) -> AssignmentModel:
     """
     Build the sparse matrix representation of Eq. (stage1-cons).
@@ -256,7 +257,14 @@ def build_model(
         as the paper is written. With fractional visit counts (n_i < 1),
         pass the one-execution costs, assignment_costs(..., visits=None),
         so that f_ij = 1 still means one run of u_i fits in c_j.
+
+    qp_weighting:
+        "unweighted"  load operator M5 (tasks per capacitor).
+        "weighted"    load operator M5 diag(d) / max(d) (energy per capacitor).
     """
+
+    if qp_weighting not in QP_WEIGHTINGS:
+        raise ValueError(f"qp_weighting must be one of {QP_WEIGHTINGS}, got {qp_weighting!r}")
 
     d_mat = np.asarray(energy_costs, dtype=float)
 
@@ -303,6 +311,8 @@ def build_model(
 
     ones = np.ones(K * (N + 1))
     objective = np.asarray(ones @ M1).ravel()
+    # dmat_pad = np.hstack((np.zeros(K),d_mat.flatten()))
+    # objective = np.asarray(dmat_pad @ M1).ravel()
 
     # ------------------------------------------------------------
     # Eq. (stage1-cons), row by row.
@@ -353,11 +363,25 @@ def build_model(
     A = sp.vstack(blocks_A, format="csr")
     b = np.concatenate(blocks_b)
 
+    # ------------------------------------------------------------
+    # QP load operator P, objective ||P z||^2.
+    #
+    # The weighted operator is divided by the largest cost. That leaves the
+    # minimizer unchanged but keeps the objective O(1): in joules it is
+    # ~1e-4 J^2 with gaps of ~1e-6 between plans, close enough to SCIP's
+    # tolerances that it occasionally returned a suboptimal plan in testing.
+    # ------------------------------------------------------------
+
+    if qp_weighting == "weighted":
+        load_operator = (M5 @ sp.diags(d / d_mat.max())).tocsr()
+    else:
+        load_operator = M5
+
     return AssignmentModel(
         A=A,
         b=b,
         objective=objective,
-        load_operator=M5,
+        load_operator=load_operator,
         f=f,
         d=d,
         N=N,
@@ -365,6 +389,7 @@ def build_model(
         M=M,
         E_allowed=E_allowed,
         energy_constraint=energy_constraint,
+        qp_weighting=qp_weighting,
     )
 
 
@@ -583,17 +608,18 @@ def solve_stage1_milp(
 
 def solve_stage2_miqp(
     model: AssignmentModel,
-    optimal_tasks: int,
+    optimal_tasks: int | None = None,
 ) -> dict:
     """
-    Stage 2:
+    QP:
 
         minimize sum_i load_i^2
 
     subject to:
 
         A z <= b
-        objective^T z == optimal_tasks
+        objective^T z == optimal_tasks   (only when optimal_tasks is given,
+                                          i.e. solver="lp+qp")
         z binary
 
     where:
@@ -661,21 +687,23 @@ def solve_stage2_miqp(
         )
 
     # ------------------------------------------------------------
-    # Preserve Stage 1 optimum:
+    # Lexicographic mode only: keep the LP optimum,
     #
     #     objective^T z == optimal_tasks
     #
-    # THIS IS THE IMPORTANT LEXICOGRAPHIC CONSTRAINT.
+    # Redundant under the assignment equality (it fixes N), so the
+    # one-shot "qp" mode omits it.
     # ------------------------------------------------------------
 
-    primary_expr = quicksum(
-        float(model.objective[j]) * z[j] for j in range(n) if model.objective[j] != 0.0
-    )
+    if optimal_tasks is not None:
+        primary_expr = quicksum(
+            float(model.objective[j]) * z[j] for j in range(n) if model.objective[j] != 0.0
+        )
 
-    scip.addCons(
-        primary_expr == float(optimal_tasks),
-        name="stage1_optimum",
-    )
+        scip.addCons(
+            primary_expr == float(optimal_tasks),
+            name="stage1_optimum",
+        )
 
     # ------------------------------------------------------------
     # Load expressions
@@ -764,72 +792,55 @@ def solve_stage2_miqp(
 
 def solve_assignment(
     model: AssignmentModel,
+    solver: str = "qp",
 ) -> dict:
     """
-    Lexicographic assignment:
+    Solve the assignment problem in the chosen mode (see module docstring).
 
-        Stage 1:
-            maximize number of assigned tasks.
-
-        Stage 2:
-            among all Stage 1-optimal solutions,
-            minimize sum of squared capacitor loads.
+    Returns the solver's result dict (status, solution, wall_time_ms, ...)
+    plus "solver" and, on success, "n_assigned". A successful solve that does
+    not assign every task raises, because the equality rows should make that
+    impossible.
     """
 
-    # ------------------------------------------------------------
-    # Stage 1
-    # ------------------------------------------------------------
+    if solver not in SOLVERS:
+        raise ValueError(f"solver must be one of {SOLVERS}, got {solver!r}")
 
-    stage1 = solve_stage1_milp(model)
+    if solver == "lp":
+        result = solve_stage1_milp(model)
 
-    if stage1["status"] not in (
-        "OPTIMAL",
-        "FEASIBLE",
-    ):
-        print("returning stage 1; stage 1 not optimal or feasible")
+    elif solver == "qp":
+        result = solve_stage2_miqp(model)
+        result["stage2_wall_time_ms"] = result["wall_time_ms"]
 
-        return stage1
+    else:  # "lp+qp"
+        stage1 = solve_stage1_milp(model)
+        if stage1["status"] not in _OK:
+            stage1["solver"] = solver
+            return stage1
 
-    optimal_tasks = round(stage1["objective"])
+        result = solve_stage2_miqp(model, optimal_tasks=round(stage1["objective"]))
+        if result["status"] not in _OK:
+            stage1["solver"] = solver
+            return stage1
 
-    # print(f"Stage 1 optimal assignments: {optimal_tasks}")
+        result["stage1_objective"] = stage1["objective"]
+        result["stage1_wall_time_ms"] = stage1["wall_time_ms"]
+        result["stage2_wall_time_ms"] = result["wall_time_ms"]
+        result["wall_time_ms"] = stage1["wall_time_ms"] + result["wall_time_ms"]
 
-    # ------------------------------------------------------------
-    # Stage 2
-    # ------------------------------------------------------------
+    result["solver"] = solver
 
-    stage2 = solve_stage2_miqp(
-        model,
-        optimal_tasks,
-    )
+    if result["status"] in _OK:
+        n_assigned = int(round(float(model.objective @ result["solution"])))
+        result["n_assigned"] = n_assigned
+        if n_assigned != model.N:
+            raise RuntimeError(
+                f"{solver} solve assigned {n_assigned} of {model.N} tasks; "
+                "the assignment equality is not holding"
+            )
 
-    if stage2["status"] not in (
-        "OPTIMAL",
-        "FEASIBLE",
-    ):
-        print("returning stage 1; stage 2 not optimal or feasible")
-
-        return stage1
-
-    # ------------------------------------------------------------
-    # Preserve Stage 1 metadata
-    # ------------------------------------------------------------
-
-    stage2["stage1_objective"] = stage1["objective"]
-
-    stage2["stage1_wall_time_ms"] = stage1["wall_time_ms"]
-
-    stage2["stage2_wall_time_ms"] = stage2["wall_time_ms"]
-
-    stage2["wall_time_ms"] = stage1["wall_time_ms"] + stage2["wall_time_ms"]
-
-    # print(
-    #     "Stage 2 selected."
-    #     f" loads={stage2['capacitor_loads']},"
-    #     f" load_objective={stage2['load_objective']}"
-    # )
-
-    return stage2
+    return result
 
 
 class TaskAssigner:
@@ -839,14 +850,23 @@ class TaskAssigner:
         tasks,
         cap_limit,
         replan_depth,
-        energy_constraint
+        energy_constraint,
+        solver="qp",
+        qp_weighting="unweighted",
     ):
+        if solver not in SOLVERS:
+            raise ValueError(f"solver must be one of {SOLVERS}, got {solver!r}")
+        if qp_weighting not in QP_WEIGHTINGS:
+            raise ValueError(f"qp_weighting must be one of {QP_WEIGHTINGS}, got {qp_weighting!r}")
+        self.solver = solver
+        self.qp_weighting = qp_weighting
         self.caps = caps
         self.tasks = tasks
         self.N = len(tasks)
         self.K = len(caps)
         self.M = cap_limit
         self.replan_depth = replan_depth
+        self._planned_at = 0
         self.energy_constraint = energy_constraint
         self.task_idx = {t.name: i for i, t in enumerate(tasks)}
 
@@ -871,9 +891,17 @@ class TaskAssigner:
             M=self.M,
             caps=tmp,
             energy_costs=energy_costs,
-            energy_constraint=self.energy_constraint
+            energy_constraint=self.energy_constraint,
+            qp_weighting=self.qp_weighting,
         )
-        return solve_assignment(model)
+        result = solve_assignment(model, solver=self.solver)
+        if result["status"] not in _OK:
+            raise RuntimeError(
+                f"presolve is {result['status']}: no plan satisfies the constraints "
+                f"(M={self.M}, energy_constraint={self.energy_constraint}, "
+                f"caps={[c.farads for c in self.caps]})"
+            )
+        return result
 
     def assign(
         self,
@@ -892,43 +920,64 @@ class TaskAssigner:
             M=self.M,
             caps=self.caps,
             energy_costs=energy_costs,
-            energy_constraint=self.energy_constraint
+            energy_constraint=self.energy_constraint,
+            qp_weighting=self.qp_weighting,
         )
 
-        return solve_assignment(model)
+        return solve_assignment(model, solver=self.solver)
 
     def should_schedule(self, config=None):
-
-        if config is None:
+        if config is None or self.replan_depth <= 0:
             return False
-
-        if self.replan_depth <= 0:
+        if config.depth % self.replan_depth or config.depth == getattr(self, "_planned_at", 0):
             return False
+        self._planned_at = config.depth
+        return True
 
-        return not config.depth % self.replan_depth
 
 
 class LeacSimConfig(CapacitorStorageSimConfig):
     def __init__(
         self,
-        tasks,
+        # tasks,
         cap_limit,
         replan_depth,
         energy_constraint,
+        harvest_routing="fallback",
+        solver="qp",
+        qp_weighting="unweighted",
         **kwargs
     ):
         super().__init__(**kwargs)
 
         self.cap_limit = cap_limit
 
+        # "children": charge only the caps of the active task's possible next
+        #     tasks (previous behavior; harvest idles when none needs charge).
+        # "fallback": if no child cap needs charge, feed the active cap; if it
+        #     is full too, charge one other in-use cap (plan item 1.1, Residual A).
+        if harvest_routing not in ("children", "fallback"):
+            raise ValueError(f"unknown harvest_routing {harvest_routing!r}")
+        self.harvest_routing = harvest_routing
+
+        # solver: "lp" (LEACS MILP), "qp" (Thimble, one solve) or "lp+qp"
+        # (lexicographic, for ablation). qp_weighting: "unweighted" (M5) or
+        # "weighted" (M5 diag(d)). Both apply to the presolve and to replans.
+        self.solver = solver
+        self.qp_weighting = qp_weighting
+
         self.assignment = None
+
+        tasks = tasks_from_sm(self.sink.sm)
 
         self.assigner = TaskAssigner(
             self.caps,
             tasks,
             cap_limit,
             replan_depth,
-            energy_constraint
+            energy_constraint,
+            solver=solver,
+            qp_weighting=qp_weighting,
         )
 
         result = self.assigner.presolve()
@@ -943,75 +992,110 @@ class LeacSimConfig(CapacitorStorageSimConfig):
 
         self.last_substate = None
         self.depth = 0
+        self.full_lap = 0
 
-
-    def callback(self, time: float):
-
-        active_substate, child_substates = self.sm._get_task_state_id()
+    def callback(self, time):
+        active, children = self.sm._get_task_state_id()
 
         if self.sm.time == 0.0:
-            for i, cap in enumerate(self.caps):
-                if self.assignment is not None:
-                    # the following check evaluates any nonzero as True
-                    if i in np.argwhere(self.assignment[:len(self.caps)]):
-                        cap.connect(0)
-
-            self.src.connect(0)
             self.sink.connect(1)
-
         self.sm.time = time
 
-        # Apply previous assignment to the state machine.
-        if self.assignment is not None:
-            pairs = self._apply_assignment_to_SM(self.assignment)
-            assigned_cap_idx = None
-            child_cap_idx = []
+        pairs = self._decode_assignment_result(self.assignment)
+        cap_of = {t: c for c, t in pairs}
 
-            if active_substate is not None:
-                if active_substate == 'sleep' and self.last_substate:
-                    last_task = self.assigner.task_idx[self.last_substate]
-                    for cap_idx, task_idx in pairs:
-                        if task_idx == last_task:
-                            child_cap_idx.append(cap_idx)
-                elif active_substate == 'sleep' and not self.last_substate:
-                    measure = self.assigner.task_idx['measure']
-                    child_cap_idx.extend(c for c, t in pairs if t == measure)
-                else:
-                    for cap_idx, task_idx in pairs:
-                        if task_idx == self.assigner.task_idx[active_substate]:
-                            assigned_cap_idx = cap_idx
-                        elif task_idx in child_substates:
-                            child_cap_idx.append(cap_idx)
+        # never run a task on a cap that cannot power the sink: pause and charge it
+        if active not in (None, "sleep"):
+            j = cap_of[self.assigner.task_idx[active]]
+            if self.caps[j].voltage <= self.caps[j].v_min:
+                self.sm.send("pause")
+                self.last_substate, active = active, "sleep"
+            else:
+                self.sm.cap = self.caps[j]
 
-            if self.last_substate and active_substate != self.last_substate:
-                self.depth += 1
+        assigned, charging = None, []
+        if active == "sleep":
+            resume = self.assigner.task_idx[self.last_substate or "measure"]
+            j = cap_of[resume]
+            charging = [j]
+            self.sm.cap = self.caps[j]                       # wake test == charging cap
+            task = self.assigner.tasks[resume]
+            self.sm.wake_energy = 1.1 * (task.cost + self.caps[j].leakage * self.caps[j].voltage) * task.duration
+        elif active is not None:
+            assigned = cap_of[self.assigner.task_idx[active]]
+            charging = [cap_of[t] for t in np.ravel(children) if cap_of[t] != assigned]
 
-            # Assigned capacitor -> sink.
-            # All others -> source.
-            for i, cap in enumerate(self.caps):
-                if i == assigned_cap_idx:
-                    cap.disconnect(0)
-                    cap.connect(1)
-                elif i in child_cap_idx:
-                    cap.connect(0)
-                    cap.disconnect(1)
-                else:
-                    cap.disconnect(0)   # unselected caps never sit on the charge line
-                    cap.disconnect(1)
+        # depth counts task-to-task transitions and rx->measure for metrics
+        if active not in (None, "sleep") and self.last_substate and active != self.last_substate:
+            self.depth += 1
+            if self.last_substate == 'rx' and active == 'measure':
+                self.full_lap += 1
 
-        # Solve a new assignment when scheduling
-        # becomes possible.
+        charging, feed_active = self._route_harvest(assigned, charging, cap_of)
+
+        for i, cap in enumerate(self.caps):
+            if i == assigned:
+                cap.disconnect(0); cap.connect(1)
+            elif i in charging:
+                cap.connect(0); cap.disconnect(1)
+            else:
+                cap.disconnect(0); cap.disconnect(1)
+
+        # The source sits on exactly one line. With both switches closed, the
+        # source node would join line 0 and line 1 and put the active cap in
+        # parallel with the charging caps.
+        if feed_active:
+            self.src.disconnect(0); self.src.connect(1)
+        else:
+            self.src.disconnect(1); self.src.connect(0)
+
         if self.assigner.should_schedule(self):
             try:
                 result = self.assigner.assign(time)
-            except ValueError:                      # some task fits no capacitor now
-               result = None
+            except ValueError:
+                result = None
             if result is not None and result["status"] in ("OPTIMAL", "FEASIBLE"):
-               self.assignment = result["solution"]
+                self.assignment = result["solution"]
 
-        if active_substate != 'sleep':
-            self.last_substate = active_substate
+        if active != "sleep":
+            self.last_substate = active
         self._update_sink()
+
+    def _route_harvest(self, assigned, charging, cap_of):
+        """Decide where harvested energy goes this step (plan item 1.1, Residual A).
+
+        Returns (charging, feed_active): the caps to put on the charge line
+        (line 0), and whether the source should move to the sink line (line 1)
+        to feed the active cap instead.
+
+        A cap needs charge while it is below v_max. In priority order:
+          1. children of the active task (or, asleep, the task to resume);
+          2. the active cap, by connecting the source to the sink line;
+          3. one other cap that holds tasks in the current plan, the one with
+             the lowest voltage relative to v_max.
+        With harvest_routing="children" only tier 1 applies, which is the
+        previous behavior except that full caps are no longer charged.
+        """
+        def needs_charge(j):
+            return self.caps[j].voltage < self.caps[j].v_max
+
+        # Tier 1. dict.fromkeys drops duplicates when two children share a cap.
+        tier1 = [j for j in dict.fromkeys(charging) if needs_charge(j)]
+        if tier1 or self.harvest_routing == "children":
+            return tier1, False
+
+        # Tier 2: the active cap. Planner certificates assume no harvest, so
+        # feeding the running task only adds margin.
+        if assigned is not None and needs_charge(assigned):
+            return [], True
+
+        # Tier 3: bank energy in another cap the plan uses, rather than lose it.
+        others = [j for j in set(cap_of.values()) if j != assigned and needs_charge(j)]
+        if others:
+            j = min(others, key=lambda k: self.caps[k].voltage / self.caps[k].v_max)
+            return [j], False
+
+        return [], False
 
     def _decode_assignment_result(
         self,
@@ -1133,18 +1217,10 @@ if __name__ == "__main__":
         for c in cap_values
     ]
 
-    tasks = [  # bookkeeping for LeacSimConfig; SMSink is hardcoded with identical Tasks
-        Task(cost=11.68e-4 * CONST_VOLTAGE, duration=0.511, name="measure"),
-        Task(cost=86.52e-4 * CONST_VOLTAGE, duration=0.285, name="tx"),
-        Task(cost=20.03e-4 * CONST_VOLTAGE, duration=0.937, name="rx"),
-    ]
-
     sink = SMSink(init_MTRSinkSM(caps[0]))
 
     config = LeacSimConfig(
-        tasks,
         M,
-        0,
         replan_depth,
         energy_constraint,
         src=src,

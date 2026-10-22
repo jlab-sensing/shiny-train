@@ -141,8 +141,10 @@ class MATRSinkSM(StateChart):
     rng = np.random.default_rng(seed=42)
     task_start = 0.0
     remaining_time = 0.0
-    load_value = 1e-6  # OUTPUT: the energy consumption for next timestep
+    load_value = 4.64e-4 * DC_VOLTS  # OUTPUT: the energy consumption for next timestep
     transitions = TRANSITION_MATRIX
+    TASK_NAMES = ['measure', 'analyze', 'tx', 'rx']
+    wake_energy = None
 
     class task(State.Compound):
         measure = State(
@@ -161,7 +163,7 @@ class MATRSinkSM(StateChart):
         )
         h = HistoryState(type="deep")
 
-    sleep = State("sleep", initial=True, value=Task(cost=4.64e-4 * DC_VOLTS, duration=None, name="sleep"))
+    sleep = State("sleep", initial=True, value=Task(cost=4.64e-4 * DC_VOLTS, duration=0.01, name="sleep"))
     # sleep = State("sleep", initial=True, value=4.64e-4 * DC_VOLTS)
     # replan = State("replan", value=4.64e-4 * DC_VOLTS)
 
@@ -259,7 +261,11 @@ class MATRSinkSM(StateChart):
         return np.abs(self.rng.standard_normal()) >= n
 
     def charged(self):
-        return self.cap.voltage >= self.cap.v_max
+        need = getattr(self, "wake_energy", None)
+        if need is None:
+            return self.cap.voltage >= self.cap.v_max
+        return self.cap.energy - self.cap.min_energy >= need
+
 
     def recharging(self):
         return self.cap.voltage < self.cap.v_max
@@ -306,7 +312,7 @@ class TestSinkSM(MTRSinkSM):
                 ) ** 0.5
 
 
-def init_MTRSinkSM(cap, testing=True):
+def init_MTRSinkSM(cap, testing=False):
     if testing:
         sm = TestSinkSM()
     else:
