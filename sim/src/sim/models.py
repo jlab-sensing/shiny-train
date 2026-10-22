@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from multiprocessing import Manager, Pool
 from queue import Queue
 import pickle
+from itertools import pairwise
 
 import h5py
 
@@ -785,7 +786,7 @@ class Event:
             name: str,
             time: float,
             ignore: bool = False,
-            failed: bool = True
+            failed: bool = False,
     ):
         """Initialize a results label with a name and time.
 
@@ -948,6 +949,54 @@ class SimulationResults:
 
         with open(path, "wb") as f:
             pickle.dump(self, f)
+
+    def unique_events(self) -> list[str]:
+        """Get the names of unique events.
+
+        The list is sorted by their appearance in time.
+
+        Returns:
+            List of names
+        """
+
+        return sorted({e.name for e in self.events})
+
+
+    def event_count(self, name: str = "") -> int:
+        """Total number of events.
+
+        Returns:
+            Number of events
+        """
+
+        if name:
+            return sum(ev.name == name for ev in self.events)
+
+        return len(self.events)
+
+
+    def event_cycles(self, start: str, end: str) -> int:
+        """Number of transitions from end to start (cycles).
+
+        Args:
+            start: First event
+            end: Last event
+
+        Returns:
+            Number of full cycles
+        """
+
+        sorted_events = sorted(self.events)
+        return sum(a.name != b.name for a, b in pairwise(sorted_events))
+
+    def event_failures(self) -> int:
+        """Number of events that failed.
+
+        Returns:
+            Number of failed events
+        """
+
+        return sum(e.failed for e in self.events)
 
 
     @staticmethod
@@ -1189,6 +1238,12 @@ class SimulationPlotter:
             "cap_current",
             # plots that show summary of results
             "final_energy",
+            "final_counts",
+            "final_transitions",
+            # plots for events
+            "event_vertical",
+            "event_shaded",
+            "event_line",
         ]
 
         if layout == "individual":
@@ -1199,6 +1254,7 @@ class SimulationPlotter:
             ts_subfigs = ts_fig.subfigures(4, 3)
 
             fin_fig = plt.figure()
+            fin_subfigs = fin_fig.subfigures(3, 1)
 
             event_fig = plt.figure()
             event_subfigs = event_fig.subfigures(1, 3)
@@ -1214,7 +1270,9 @@ class SimulationPlotter:
                 "cap_current": ts_subfigs[2][2],
                 "energy": ts_subfigs[3][0],
                 "cap_energy": ts_subfigs[3][1],
-                "final_energy": fin_fig,
+                "final_energy": fin_subfigs[0],
+                "final_transitions": fin_subfigs[1],
+                "final_counts": fin_subfigs[2],
                 "event_vertical": event_subfigs[0],
                 "event_shaded": event_subfigs[1],
                 "event_line": event_subfigs[2],
@@ -1640,6 +1698,8 @@ class SimulationPlotter:
         """Plots the final results from the simulation."""
 
         self._plot_final_energy(self.get_fig("final_energy"), results)
+        self._plot_final_counts(self.get_fig("final_counts"), results)
+        self._plot_final_transitions(self.get_fig("final_transitions"), results)
 
 
 
@@ -1697,6 +1757,67 @@ class SimulationPlotter:
         ax.legend()
 
 
+
+    def _plot_final_counts(self, fig: Figure, results: list[SimulationResults]):
+        """Plot the event counts per run."""
+
+        ax = fig.subplots()
+
+        run_names = [res.name for res in results]
+
+        # get unique names among all results
+        event_names = set()
+        for res in results:
+            event_names |= set(res.unique_events())
+
+        # build dictionary for grouped bar
+        event_counts = {name: [] for name in event_names}
+        for res in results:
+            for name in res.unique_events():
+                event_counts[name].append(res.event_count(name))
+
+        bar = ax.grouped_bar(event_counts, tick_labels=run_names, group_spacing=1)
+
+        # modify bars
+        hatches = ["", "//", "\\\\", "xx", "..", "++", "oo", "--", "**"]
+        for i, container in enumerate(bar.bar_containers):
+            for rect in container:
+                rect.set_hatch(hatches[i % len(hatches)])
+                rect.set_edgecolor("black")
+                rect.set_linewidth(0.5)
+            ax.bar_label(container, padding=3)
+
+
+        ax.set_ylabel("Count")
+        ax.legend()
+
+
+    def _plot_final_transitions(self, fig: Figure, results: list[SimulationResults]):
+        """Plot the number of transitions per run."""
+
+        ax = fig.subplots()
+
+        run_names = [res.name for res in results]
+
+        transitions = {
+            "Total": [res.event_count() for res in results],
+            "Cycles": [res.event_cycles("50s", "70s") for res in results],
+            "Failure": [res.event_failures() for res in results],
+        }
+
+        bar = ax.grouped_bar(transitions, tick_labels=run_names, group_spacing=1)
+
+        # modify bars
+        hatches = ["", "//", "\\\\", "xx", "..", "++", "oo", "--", "**"]
+        for i, container in enumerate(bar.bar_containers):
+            for rect in container:
+                rect.set_hatch(hatches[i % len(hatches)])
+                rect.set_edgecolor("black")
+                rect.set_linewidth(0.5)
+            ax.bar_label(container, padding=3)
+
+        ax.set_ylabel("Count")
+        ax.legend()
 
     def _plot_event_vertical(self, fig: Figure, results: list[SimulationResults]):
         """Plots vertical lines at each event.
