@@ -15,11 +15,18 @@ from sim.models import (
     CVCapacitor,
     IdealCapacitor,
     SimulationRunner,
+    Event,
 )
 
 
 class MyConfig(CapacitorStorageSimConfig):
+    next_50 = 500.0
+    next_70 = 700.0
+    next_90 = 900.0
+
     def callback(self, time: float):
+
+        event = None
 
         # connect caps
         for cap in self.caps:
@@ -32,15 +39,19 @@ class MyConfig(CapacitorStorageSimConfig):
             self.src.disconnect(0)
             self.sink.connect(0)
 
-        # toggle load based on cap voltage
-        # if self.caps[0].voltage > 0.5:
-        #    print("discharge")
-        #    self.src.disconnect(0)
-        #    self.sink.connect(0)
-        # elif self.caps[0].voltage < 0.2:
-        #    print("charge")
-        #    self.src.connect(0)
-        #    self.sink.disconnect(0)
+        if time >= self.next_50:
+            event = Event("50s", time)
+            self.next_50 += 500.0
+
+        if time >= self.next_70:
+            event = Event("70s", time)
+            self.next_70 += 700.0
+
+        if time >= self.next_90:
+            event = Event("90s", time, ignore=True)
+            self.next_90 += 900.0
+
+        return event
 
 
 def create_config(caps: list[Capacitor]):

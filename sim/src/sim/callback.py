@@ -46,6 +46,7 @@ from .models import (
     CapacitorStorageSimConfig,
     LeacsCapacitor,
     SMSink,
+    Event,
 )
 from .state_machines import Task, MATRSinkSM, init_MTRSinkSM
 from .leaf_distribution import leaf_distribution
@@ -1113,9 +1114,16 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         self.last_substate = None
         self.depth = 0
         self.full_lap = 0
+        
+        # get the last substate for all states
+        # gets updated at every timestep
+        self.last_substate_all = None
 
-    def callback(self, time):
+    def callback(self, time: float):
         active, children = self.sm._get_task_state_id()
+        event = None
+
+        active_substate, child_substates = self.sm._get_task_state_id()
 
         if self.sm.time == 0.0:
             self.sink.connect(1)
@@ -1179,7 +1187,22 @@ class LeacSimConfig(CapacitorStorageSimConfig):
 
         if active != "sleep":
             self.last_substate = active
+
+        # check if state is different from lsat timestep
+        if active_substate != self.last_substate_all:
+            # store event
+            if active_substate == "sleep":
+                event = Event(active_substate, time, ignore=True)
+            else:
+                event = Event(active_substate, time)
+            # update last event
+            self.last_substate_all = active_substate
+
+
+        # run the state machine
         self._update_sink()
+
+        return event
 
     def _transition_rows(self):
         """Transition matrix rows in task order, from the state machine."""
