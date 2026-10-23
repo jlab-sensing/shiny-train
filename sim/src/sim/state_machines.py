@@ -12,7 +12,9 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 DC_VOLTS = 3.2
 
 a = 0.95
-b = 0.03
+b = 0.02
+# a = 0.60
+# b = 0.30
 TRANSITION_MATRIX = {
     'measure': np.array([0, 1, 0, 0]),
     'analyze': np.array([a, 0, (1-a), 0]),
@@ -323,11 +325,8 @@ def init_MTRSinkSM(cap, testing=False):
     return sm
 
 
-def init_MATRSinkSM(cap, testing=True):
-    if testing:
-        sm = TestSinkSM()
-    else:
-        sm = MATRSinkSM()
+def init_MATRSinkSM(cap, testing=False):
+    sm = MATRSinkSM()
     sm.cap = cap
     sm.task_start = 0.0
     sm.time = 0.0

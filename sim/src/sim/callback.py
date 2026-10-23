@@ -48,8 +48,11 @@ from .models import (
     SMSink,
 )
 from .state_machines import Task, MATRSinkSM, init_MTRSinkSM
+from .leaf_distribution import leaf_distribution
 
 SOLVERS = ("lp", "qp", "lp+qp")
+REPLAN_TRIGGERS = ("depth", "forecast", "both")
+VISIT_RULES = ("one", "ceil", "max")
 QP_WEIGHTINGS = ("unweighted", "weighted")
 _OK = ("OPTIMAL", "FEASIBLE")
 
@@ -183,6 +186,76 @@ def expected_visits(
         dist = dist @ transition
 
     return visits
+
+
+def visit_counts(P, start: int, depth: int, rule: str = "ceil") -> np.ndarray | None:
+    """
+    n_i for the D + 1 tasks starting at `start` (the root plus `depth` more).
+
+        "one"   None: every task counted once (the costs are not scaled)
+        "ceil"  ceil(expected visits), from expected_visits()
+        "max"   the most visits any reachable trajectory makes, from
+                leaf_distribution with a one-hot energy vector
+
+    Because the most visits is an integer no smaller than the mean,
+    ceil(expected) <= max for every task: "max" is the worst-case bound,
+    "ceil" sits between the mean and it. A small tolerance keeps float
+    error (2.0000000000000004) from rounding up.
+    """
+
+    if rule not in VISIT_RULES:
+        raise ValueError(f"visit rule must be one of {VISIT_RULES}, got {rule!r}")
+    if rule == "one":
+        return None
+    if rule == "ceil":
+        return np.ceil(expected_visits(np.asarray(P, dtype=float), start, depth) - 1e-9)
+
+    n = len(P)
+    out = np.zeros(n)
+    for i in range(n):
+        onehot = [1.0 if k == i else 0.0 for k in range(n)]
+        _, marginal = leaf_distribution(P, onehot, start=start, steps=depth)
+        out[i] = max(marginal)
+    return out
+
+
+def forecast_brownout(P, plan, costs, available, start: int, horizon: int, risk: float = 0.0):
+    """
+    Forecast capacitor overdraw along the task tree, assuming no harvest.
+
+    P[i][j]       transition probabilities, task order
+    plan[i]       capacitor of task i
+    costs[i][j]   energy one execution of task i draws from capacitor j
+    available[j]  usable energy stored in capacitor j now
+
+    Energy drawn from capacitor j along a trajectory is the sum of costs of
+    its tasks that run on j, so leaf_distribution tracks it exactly with
+    e_i = costs[i][j] for tasks on j and 0 otherwise. Depth 0 is the root
+    task itself.
+
+    For each capacitor, the earliest depth in 0..horizon at which the
+    probability of overdraw exceeds `risk` (0 means "some reachable
+    trajectory overdraws it"). With risk > 0 each capacitor is tested
+    separately, a lower bound on the probability that any is overdrawn.
+
+    Returns (depth, risky): the earliest such depth over all capacitors, or
+    None; and the set of tasks that tip a capacitor over at its earliest
+    overdraw depth (the last task of each overdrawing trajectory there).
+    """
+
+    first, risky = None, set()
+    for j in sorted(set(plan)):
+        e = [costs[i][j] if plan[i] == j else 0.0 for i in range(len(plan))]
+        dist, marginal = leaf_distribution(P, e, start=start, steps=0)
+        for D in range(horizon + 1):
+            if D > 0:
+                dist, marginal = leaf_distribution(P, e, steps=1, dist=dist)
+            p_over = sum(p for E, p in marginal.items() if E > available[j])
+            if p_over > risk:
+                first = D if first is None else min(first, D)
+                risky |= {s for (s, E), p in dist.items() if E > available[j] and p > 0}
+                break
+    return first, risky
 
 
 def build_operators(N: int, K: int):
@@ -906,13 +979,22 @@ class TaskAssigner:
     def assign(
         self,
         time,
+        visits=None,
     ):
         # c.leakage is current -> p = IV = 0.01*C*V^2
         # c.energy = 0.5 * v**2 * c
-        #   ==> p_leak = 0.01 C * V**2 = c.energy / 0.01 / 2
-        energy_costs = [
+        #   ==> p_leak = 0.01 C * V**2 = 0.02 * c.energy / 1 s
+        one_run = np.array([
             [(c.leakage * c.voltage + t.cost) * t.duration for c in self.caps] for t in self.tasks
-        ]
+        ])
+
+        # d_ij = n_i (E_i + l_ij), Eq. (costs). The per-pair mask keeps
+        # one-execution costs, so f_ij = 1 still means one run fits.
+        if visits is None:
+            energy_costs, feasibility_costs = one_run, None
+        else:
+            energy_costs = np.asarray(visits, dtype=float)[:, np.newaxis] * one_run
+            feasibility_costs = one_run
 
         model = build_model(
             N=self.N,
@@ -921,6 +1003,7 @@ class TaskAssigner:
             caps=self.caps,
             energy_costs=energy_costs,
             energy_constraint=self.energy_constraint,
+            feasibility_costs=feasibility_costs,
             qp_weighting=self.qp_weighting,
         )
 
@@ -946,6 +1029,12 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         harvest_routing="fallback",
         solver="qp",
         qp_weighting="unweighted",
+        replan_trigger="depth",
+        forecast_horizon=1,
+        forecast_risk=0.0,
+        forecast_gate=True,
+        visit_rule="one",
+        visit_depth=3,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -965,6 +1054,37 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         # "weighted" (M5 diag(d)). Both apply to the presolve and to replans.
         self.solver = solver
         self.qp_weighting = qp_weighting
+
+        # replan_trigger:
+        #   "depth"     every replan_depth task transitions (previous behavior)
+        #   "forecast"  at each task start, enumerate trajectories from the
+        #               active task with leaf_distribution and replan if, with
+        #               no harvest, some capacitor can be overdrawn within
+        #               forecast_horizon transitions (1 = by the next task)
+        #               with probability above forecast_risk (0 = "can")
+        #   "both"      either condition
+        # forecast_gate: when the forecast fires, replan only if some task that
+        #   can tip a capacitor over has another capacitor that holds enough
+        #   stored energy for one run of it now. Otherwise no new plan can
+        #   avoid the wait for charge, and the replan is skipped.
+        # visit_rule: n_i for replans over visit_depth transitions from the
+        #   active task: "one" (previous behavior), "ceil" (ceil of expected
+        #   visits) or "max" (worst case over reachable trajectories).
+        if replan_trigger not in REPLAN_TRIGGERS:
+            raise ValueError(f"replan_trigger must be one of {REPLAN_TRIGGERS}, got {replan_trigger!r}")
+        if visit_rule not in VISIT_RULES:
+            raise ValueError(f"visit_rule must be one of {VISIT_RULES}, got {visit_rule!r}")
+        self.replan_trigger = replan_trigger
+        self.forecast_horizon = forecast_horizon
+        self.forecast_risk = forecast_risk
+        self.forecast_gate = bool(forecast_gate)
+        self.visit_rule = visit_rule
+        self.visit_depth = visit_depth
+        self._forecast_key = None
+        self.forecast_checks = 0
+        self.forecast_triggers = 0
+        self.forecast_gated = 0
+        self.last_forecast = None
 
         self.assignment = None
 
@@ -1049,9 +1169,9 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         else:
             self.src.disconnect(1); self.src.connect(0)
 
-        if self.assigner.should_schedule(self):
+        if self._should_replan(active, cap_of):
             try:
-                result = self.assigner.assign(time)
+                result = self.assigner.assign(time, visits=self._visits(active))
             except ValueError:
                 result = None
             if result is not None and result["status"] in ("OPTIMAL", "FEASIBLE"):
@@ -1060,6 +1180,67 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         if active != "sleep":
             self.last_substate = active
         self._update_sink()
+
+    def _transition_rows(self):
+        """Transition matrix rows in task order, from the state machine."""
+        return [np.asarray(self.sm.transitions[t.name], dtype=float) for t in self.assigner.tasks]
+
+    def _should_replan(self, active, cap_of):
+        """Depth trigger, forecast trigger, or both (see replan_trigger)."""
+        fire = False
+        if self.replan_trigger in ("depth", "both"):
+            fire = self.assigner.should_schedule(self)
+
+        if self.replan_trigger in ("forecast", "both") and active not in (None, "sleep"):
+            # Once per task start (including a restart after a pause), so the
+            # check is edge-triggered like should_schedule. Checking at the
+            # start rather than the last step gives the same answer under the
+            # no-harvest assumption, and gives the new plan the whole task to
+            # charge the capacitors it assigns to the next tasks.
+            key = (active, self.sm.task_start)
+            if key != self._forecast_key:
+                self._forecast_key = key
+                self.forecast_checks += 1
+                tasks = self.assigner.tasks
+                plan = [cap_of[i] for i in range(len(tasks))]
+                costs = [[(c.leakage * c.voltage + t.cost) * t.duration for c in self.caps] for t in tasks]
+                available = [max(c.energy - c.min_energy, 0.0) for c in self.caps]
+                depth, risky = forecast_brownout(
+                    self._transition_rows(),
+                    plan=plan,
+                    costs=costs,
+                    available=available,
+                    start=self.assigner.task_idx[active],
+                    horizon=self.forecast_horizon,
+                    risk=self.forecast_risk,
+                )
+                self.last_forecast = depth
+                if depth is not None:
+                    self.forecast_triggers += 1
+                    if not self.forecast_gate or self._replan_can_help(risky, plan, costs, available):
+                        fire = True
+                    else:
+                        self.forecast_gated += 1
+        return fire
+
+    @staticmethod
+    def _replan_can_help(risky, plan, costs, available):
+        """True if some task that can tip a capacitor over has another
+        capacitor holding enough stored energy for one run of it now."""
+        return any(
+            available[k] >= costs[i][k]
+            for i in risky
+            for k in range(len(available))
+            if k != plan[i]
+        )
+
+    def _visits(self, active):
+        """n_i from the active task over visit_depth transitions, or None."""
+        if self.visit_rule == "one":
+            return None
+        root = active if active not in (None, "sleep") else (self.last_substate or "measure")
+        return visit_counts(self._transition_rows(), self.assigner.task_idx[root],
+                            self.visit_depth, self.visit_rule)
 
     def _route_harvest(self, assigned, charging, cap_of):
         """Decide where harvested energy goes this step (plan item 1.1, Residual A).
@@ -1183,7 +1364,7 @@ if __name__ == "__main__":
     replan_depth = 3
     energy_constraint = True
 
-    CONST_VOLTAGE = 3.3
+    CONST_VOLTAGE = 3.2
 
     cap_values = [
         6e-3,
@@ -1211,7 +1392,7 @@ if __name__ == "__main__":
     caps = [
         LeacsCapacitor(
             c,
-            v_min=1.7,
+            v_min=1.65,
             v_max=3.2,
         )
         for c in cap_values
@@ -1221,6 +1402,7 @@ if __name__ == "__main__":
 
     config = LeacSimConfig(
         M,
+        0,
         replan_depth,
         energy_constraint,
         src=src,

@@ -47,17 +47,18 @@ if __name__ == "__main__":
         {
             "p_lines": 2,
             "cap_limit": 2,
-            "replan_depth": -1,
+            # "replan_depth": -1,
+            "replan_depth": 2,
             "energy_constraint": False,
-            # "replan_depth": 2,
-            # "energy_constraint": False
             "harvest_routing": 'fallback',
             "solver": 'qp',
-            "qp_weighting": 'weighted'
-            # "qp_weighting": 'unweighted'
+            # "solver": 'lp',
+            "qp_weighting": 'weighted',
+            # "qp_weighting": 'unweighted',
+
         },
-        # names=[f"LEACS/src{i}" for i in range(4)],
-        names=[f"Thimble/src{i}" for i in range(4)],
+        # names=[f"unweighted/src{i}" for i in range(4)],
+        names=[f"weighted/src{i}" for i in range(4)],
     )
 
     runner = SimulationRunner(configs)
