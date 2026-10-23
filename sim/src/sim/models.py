@@ -1790,6 +1790,10 @@ class SimulationPlotter:
         for res in results:
             event_names |= set(res.unique_events())
 
+        # check for no events
+        if not event_names:
+            return
+
         # build dictionary for grouped bar
         event_counts = {name: [] for name in event_names}
         for res in results:
@@ -1847,10 +1851,10 @@ class SimulationPlotter:
         """
 
         num_plots = len(results)
-        axs = fig.subplots(num_plots, 1, sharex=True)
+        axs = fig.subplots(num_plots, sharex=True, squeeze=False)
 
         colors: dict[str, str] = {}
-        for ax, result in zip(axs, results):
+        for ax, result in zip(axs[:][0], results):
             seen = set()
             for event in result.events:
                 # sets the color if it does not exist
@@ -1862,7 +1866,7 @@ class SimulationPlotter:
             ax.set_ylabel(result.name)
 
 
-        for ax in axs:
+        for ax in axs[:][0]:
             # remove ticks
             ax.set_yticks([])
 
@@ -1871,17 +1875,17 @@ class SimulationPlotter:
             ax.grid()
             ax.legend()
 
-        axs[-1].set_xlabel("Time (s)")
+        axs[-1][0].set_xlabel("Time (s)")
 
     def _plot_event_shaded(self, fig: Figure, results: list[SimulationResults]):
         """Plots shaded regions in time between events.
         """
 
         num_plots = len(results)
-        axs = fig.subplots(num_plots, 1, sharex=True)
+        axs = fig.subplots(num_plots, 1, sharex=True, squeeze=False)
 
         colors: dict[str, str] = {}
-        for ax, result in zip(axs, results):
+        for ax, result in zip(axs[:][0], results):
             seen = set()
             events = sorted(result.events)
 
@@ -1897,14 +1901,14 @@ class SimulationPlotter:
 
             ax.set_ylabel(result.name)
 
-        for ax in axs:
+        for ax in axs[:][0]:
             # remove ticks
             ax.set_yticks([])
             ax.set_xlim(self._start(results), self._end(results))
             ax.grid(axis="x")
             ax.legend()
 
-        axs[-1].set_xlabel("Time (s)")
+        axs[-1][0].set_xlabel("Time (s)")
 
 
 
