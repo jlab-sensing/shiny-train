@@ -2182,7 +2182,7 @@ class CapacitorStorageSim:
         config: CapacitorStorageSimConfig,
         plotter: SimulationPlotter | None = None,
         progress: Callable[[float], None] | None = None,
-        r_min: float = 1e-6,
+        r_min: float = 1e-3,
         r_max: float = 1e9,
         c_bypass: float = 1e-6,
     ):
