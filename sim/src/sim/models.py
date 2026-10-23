@@ -1807,8 +1807,9 @@ class SimulationPlotter:
                 rect.set_linewidth(0.5)
             ax.bar_label(container, padding=3)
 
-
         ax.set_ylabel("Count")
+        # Account for space above the bars
+        ax.margins(y=0.25)
         ax.legend()
 
 
@@ -1837,6 +1838,8 @@ class SimulationPlotter:
             ax.bar_label(container, padding=3)
 
         ax.set_ylabel("Count")
+        # Account for space above the bars
+        ax.margins(y=0.25)
         ax.legend()
 
     def _plot_event_vertical(self, fig: Figure, results: list[SimulationResults]):
@@ -2729,6 +2732,50 @@ class SimulationRunner:
 
     def show(self):
         self.plotter.show()
+
+
+
+def capacitor_list(_min: float, _max: float, decade: str = "E6") -> list[float]:
+    """Creates a E6 capacitor value list between two values.
+
+    Args:
+        _min: Minimum farads
+        _max: Maximum farads
+
+    Returns:
+        List of capacitor values.
+    """
+
+    if decade == "E3":
+        values = [10.0, 22.0, 47.0]
+    elif decade == "E6":
+        values = [10.0, 15.0, 22.0, 33.0, 47.0, 68.0]
+    elif decade == "E12":
+        values = [10.0, 12.0, 15.0, 18.0, 22.0, 27.0, 33.0, 39.0, 47.0, 56.0,
+                  68.0, 82.0]
+    else:
+        raise NotImplementedError(f"Decade {decade} is not implemented.")
+
+    if _min <= 0 or _max <= 0:
+        raise ValueError("_min and _max must be positive.")
+    if _min > _max:
+        raise ValueError("_min must not exceed _max.")
+
+    # Base values span 10..82, so each one is value * 10**k.
+    # Pick a range of exponents wide enough to cover [_min, _max].
+    low_exp = math.floor(math.log10(_min)) - 2
+    high_exp = math.ceil(math.log10(_max))
+
+    result = []
+    for exp in range(low_exp, high_exp + 1):
+        for v in values:
+            # Build from an integer exponent via string-free scaling;
+            # round to avoid float noise like 4.7000000000000004e-06
+            c = float(f"{v}e{exp}")
+            if _min <= c <= _max:
+                result.append(c)
+
+    return result
 
 
 class SineShared(NgSpiceShared):
