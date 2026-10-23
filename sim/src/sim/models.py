@@ -2303,7 +2303,7 @@ class CapacitorStorageSim:
         progress: Callable[[float], None] | None = None,
         r_min: float = 1e-3,
         r_max: float = 1e9,
-        c_bypass: float = 1e-6,
+        c_bypass: float = 100e-6,
     ):
         """Create a simulation instance with a given configuration.
 
