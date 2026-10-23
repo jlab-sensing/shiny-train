@@ -2193,11 +2193,18 @@ class CapacitorStorageSim:
 
         circuit.V("_pwr_source", "v_pwr_source", circuit.gnd, "dc 0 external")
         circuit.BehavioralSource(
+            "_r_source_raw",
+            "v_r_source_raw",
+            circuit.gnd,
+            voltage_expression="{(V(src)*V(v_src_pos) - V(src)**2)/V(v_pwr_source)}",
+        )
+        circuit.BehavioralSource(
             "_r_source",
             "v_r_source",
             circuit.gnd,
-            voltage_expression=f"{{min(max(abs(V(v_src_pos)**2/V(v_pwr_source)), {self.r_min}), {self.r_max})}}",
+            voltage_expression=f"{{min(max(abs(V(v_r_source_raw)), {self.r_min}), {self.r_max})}}",
         )
+
 
         circuit.raw_spice += "R1 v_src_pos src R='{V(v_r_source)}'\n"
 
