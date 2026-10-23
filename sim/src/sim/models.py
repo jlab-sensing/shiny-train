@@ -1336,7 +1336,6 @@ class SimulationPlotter:
         """
 
         self.plot_multiple_ts(results)
-        self.plot_final(results)
 
 
     def plot_single_ts(self, res: SimulationResults):
@@ -1368,6 +1367,10 @@ class SimulationPlotter:
         self._plot_event_vertical(self.get_fig("event_vertical"), results)
         self._plot_event_shaded(self.get_fig("event_shaded"), results)
         self._plot_event_line(self.get_fig("event_line"), results)
+
+        self._plot_final_energy(self.get_fig("final_energy"), results)
+        self._plot_final_counts(self.get_fig("final_counts"), results)
+        self._plot_final_transitions(self.get_fig("final_transitions"), results)
 
     def _plot_capacitors(
         self,
@@ -1714,15 +1717,6 @@ class SimulationPlotter:
             max_plines = max(res.p_lines, max_plines)
         return max_plines
 
-    def plot_final(self, results: list[SimulationResults]):
-        """Plots the final results from the simulation."""
-
-        self._plot_final_energy(self.get_fig("final_energy"), results)
-        self._plot_final_counts(self.get_fig("final_counts"), results)
-        self._plot_final_transitions(self.get_fig("final_transitions"), results)
-
-
-
     def _plot_final_energy(self, fig: Figure, results: list[SimulationResults]):
         ax = fig.subplots()
 
@@ -1781,6 +1775,10 @@ class SimulationPlotter:
     def _plot_final_counts(self, fig: Figure, results: list[SimulationResults]):
         """Plot the event counts per run."""
 
+        if not self._all_events(results):
+            self._plot_text(fig, "No events")
+            return
+
         ax = fig.subplots()
 
         run_names = [res.name for res in results]
@@ -1820,6 +1818,10 @@ class SimulationPlotter:
     def _plot_final_transitions(self, fig: Figure, results: list[SimulationResults]):
         """Plot the number of transitions per run."""
 
+        if not self._all_events(results):
+            self._plot_text(fig, "No events")
+            return
+
         ax = fig.subplots()
 
         run_names = [res.name for res in results]
@@ -1849,6 +1851,10 @@ class SimulationPlotter:
     def _plot_event_vertical(self, fig: Figure, results: list[SimulationResults]):
         """Plots vertical lines at each event.
         """
+
+        if not self._all_events(results):
+            self._plot_text(fig, "No events")
+            return
 
         num_plots = len(results)
         axs = fig.subplots(num_plots, sharex=True, squeeze=False)
@@ -1880,6 +1886,10 @@ class SimulationPlotter:
     def _plot_event_shaded(self, fig: Figure, results: list[SimulationResults]):
         """Plots shaded regions in time between events.
         """
+
+        if not self._all_events(results):
+            self._plot_text(fig, "No events")
+            return
 
         num_plots = len(results)
         axs = fig.subplots(num_plots, 1, sharex=True, squeeze=False)
@@ -1914,6 +1924,10 @@ class SimulationPlotter:
 
     def _plot_event_line(self, fig: Figure, results: list[SimulationResults]):
         """Plot lines between events with color-coded markers at each transition."""
+
+        if not self._all_events(results):
+            self._plot_text(fig, "No events")
+            return
 
         num_plots = len(results)
         axs = fig.subplots(num_plots, 1, sharex=True, sharey=True, squeeze=False)[:, 0]
@@ -1960,6 +1974,43 @@ class SimulationPlotter:
         axs[0].set_ylim(-0.5, len(levels) - 0.5)
 
         axs[-1].set_xlabel("Time (s)")
+
+
+    def _plot_text(self, fig: Figure, text: str):
+        """Plots text in place of a figure.
+
+        Args:
+            fig: Figure object
+            text: Text to display
+        """
+
+        ax = fig.subplots()
+
+        # Hide the axes borders, ticks, and labels
+        ax.axis('off')
+
+        # Display the text in the center of the figure
+        ax.text(
+            0.5, 0.5,
+            text,
+            horizontalalignment="center",
+            verticalalignment="center",
+            transform=ax.transAxes,
+            fontsize=14,
+            color="gray",
+            style="italic"
+        )
+
+
+    def _all_events(self, results: list[SimulationResults]) -> set[Event]:
+        """Check if results have events."""
+
+        events = set()
+        for res in results:
+            events.update(res.events)
+
+        return events
+
 
     def show(self):
         plt.show(block=False)
@@ -2131,7 +2182,7 @@ class CapacitorStorageSim:
         config: CapacitorStorageSimConfig,
         plotter: SimulationPlotter | None = None,
         progress: Callable[[float], None] | None = None,
-        r_min: float = 0.1,
+        r_min: float = 1e-6,
         r_max: float = 1e9,
         c_bypass: float = 1e-6,
     ):
@@ -2777,7 +2828,6 @@ class SimulationRunner:
 
     def plot(self):
         self.plotter.plot_multiple_ts(self.results)
-        self.plotter.plot_final(self.results)
 
     def show(self):
         self.plotter.show()
