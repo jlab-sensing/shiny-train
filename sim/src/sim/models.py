@@ -13,6 +13,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from multiprocessing import Manager, Pool
 from queue import Queue
+import pickle
+from itertools import pairwise
 
 import h5py
 
@@ -233,7 +235,7 @@ class BaseCapacitor(SwitchedComponent, SpiceComponent):
     """
 
     farads: float
-    v_min: float = 1.7
+    v_min: float = 1.65
     v_max: float = 3.2
     _leakage: float = 3e-6
     initial_voltage: float = 0.0
@@ -658,8 +660,7 @@ class RWSource(Source):
             )
         self.mean = initial_mean
         self.stdev = stdev
-        # self.rng = np.random.default_rng(seed=seed)
-        self.rng = np.random.default_rng()
+        self.rng = np.random.default_rng(seed=seed)
 
         self.power_floor = power_floor
         self.power_roof = power_roof
@@ -672,11 +673,12 @@ class RWSource(Source):
 
     def get_power(self, time: float):
         if time != self.time:
-            delta = self.rng.normal(loc=0.0, scale=self.stdev)
-            if self.mean + delta < self.power_floor:
+            while True:
                 delta = self.rng.normal(loc=0.0, scale=self.stdev)
-            elif self.mean + delta > self.power_roof:
-                delta = self.rng.normal(loc=0.0, scale=self.stdev)
+                if self.mean + delta < self.power_floor or self.mean + delta > self.power_roof:
+                    continue
+                else:
+                    break
             self.mean += delta
             self.time = time
         return self.mean
@@ -873,6 +875,52 @@ class SMSink(Sink):
         return self.sm.load_value
 
 
+class Event:
+    """Label in time for results.
+
+    All objects stored in this class MUST be able to be pickled.
+    """
+
+    def __init__(
+            self,
+            name: str,
+            time: float,
+            ignore: bool = False,
+            failed: bool = False,
+    ):
+        """Initialize a results label with a name and time.
+
+        Args:
+            name: Name of event
+            time: Time the event happened
+        """
+
+        self.name = name
+        self.time = time
+        self.ignore = ignore
+        self.failed = failed
+
+    def __eq__(self, other: object) -> bool:
+        """Check that the names are equal."""
+
+        if not isinstance(other, Event):
+            return NotImplemented
+        return self.name == other.name
+
+    def __hash__(self) -> int:
+        """Has based on the name."""
+
+        return hash(self.name)
+
+    def __lt__(self, other: "Event") -> bool:
+        """Comparison is done based on time."""
+
+        if not isinstance(other, Event):
+            return NotImplemented
+        return self.time < other.time
+
+
+
 class CapacitorStorageSimConfig:
     # number of config objects
     count = 0
@@ -943,16 +991,19 @@ class CapacitorStorageSimConfig:
 
         return [c.farads for c in self.caps]
 
-    def callback(self, time: float):
+    def callback(self, time: float) -> Event | None:
         """Callback function to perform actions during sim runtime.
 
         This function should be overwritten by the user.
 
         Args:
             time: Timestep of simulation
+
+        Returns:
+            Event that happened at `time`
         """
 
-        return
+        return None
 
 
 class SimulationResults:
@@ -960,8 +1011,9 @@ class SimulationResults:
 
     def __init__(
         self,
-        ts: dict | None = None,
+        analysis: TransientAnalysis,
         config: CapacitorStorageSimConfig | None = None,
+        events: list[Event] | None = None,
     ):
         """Initialize results.
 
@@ -970,51 +1022,138 @@ class SimulationResults:
         plotter.
 
         Args:
-            ts: Simulation timeseries data
+            analysis: Results from pyspice transient simulation
             config: Simulation config
         """
 
-        # Sve for later
-
-        # src_energy: Energy produced from the source.
-        # sink_energy: Energy consumed by the sink.
-        # diff_energy: Difference between produce and consumed energy.
-        # cap_energy: Energy remaining in capacitor.
-
-        # src_energy: float = 0.0,
-        # sink_energy: float = 0.0,
-        # diff_energy: float = 0.0,
-        # cap_energy: float = 0.0,
-
-        # self.src_energy = src_energy
-        # self.sink_energy = sink_energy
-        # self.diff_energy = diff_energy
-        # self.cap_energy = cap_energy
-
-        if ts:
-            self.ts = ts
+        if config:
+            self._parse_config(config)
         else:
-            self.ts = {}
+            self.caps: list[Capacitor] = []
+            self.p_lines = 0
+            self.farads: list[float] = []
+            self.name = ""
 
-        self._parse_config(config)
+        self.ts: dict = {}
+        self.from_analysis(analysis)
 
-    def _parse_config(self, config: CapacitorStorageSimConfig | None = None):
+        if events:
+            self.events = events
+        else:
+            self.events = []
+
+    def start(self) -> float:
+        """Start time of the simulation.
+
+        Returns:
+            Start time
+        """
+
+        return self.ts["time"][0]
+
+    def end(self) -> float:
+        """End time of the simulation.
+
+        Returns:
+            End time
+        """
+
+        return self.ts["time"][-1]
+
+    def save(self, path: str = ""):
+        """Save results to a path.
+
+        Args:
+            path: Save path.
+        """
+
+        if not path:
+            path = self.name
+
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+
+        with open(path, "wb") as f:
+            pickle.dump(self, f)
+
+    def unique_events(self) -> list[str]:
+        """Get the names of unique events.
+
+        The list is sorted by their appearance in time.
+
+        Returns:
+            List of names
+        """
+
+        return sorted({e.name for e in self.events})
+
+
+    def event_count(self, name: str = "") -> int:
+        """Total number of events.
+
+        Returns:
+            Number of events
+        """
+
+        if name:
+            return sum(ev.name == name for ev in self.events)
+
+        return len(self.events)
+
+
+    def event_cycles(self, start: str, end: str) -> int:
+        """Number of transitions from end to start (cycles).
+
+        Args:
+            start: First event
+            end: Last event
+
+        Returns:
+            Number of full cycles
+        """
+
+        sorted_events = sorted(self.events)
+        return sum(a.name != b.name for a, b in pairwise(sorted_events))
+
+    def event_failures(self) -> int:
+        """Number of events that failed.
+
+        Returns:
+            Number of failed events
+        """
+
+        return sum(e.failed for e in self.events)
+
+
+    @staticmethod
+    def load(path: str) -> SimulationResults:
+        """Load results from a path.
+
+        Returns an instance of an object from a saved binary.
+
+        Args:
+            Load path
+
+        Returns:
+            Loaded object instance.
+        """
+
+        with open(path, "rb") as f:
+            return pickle.load(f)
+
+    def _parse_config(self, config: CapacitorStorageSimConfig):
         """Stores attributes from config to ensure objects are picklable.
 
         Args:
             config: Simulation config
         """
 
-        if config:
-            self.caps = config.caps
-            self.p_lines = config.p_lines
-            self.farads = config.farads()
-            self.name = config.name
-        else:
-            self.caps = []
-            self.p_lines = 0
-            self.farads = []
-            self.name = ""
+        self.caps = config.caps
+        self.p_lines = config.p_lines
+        self.farads = config.farads()
+        self.name = config.name
+
 
     def get_slice(self) -> "SimulationResults":
         """Get a slice of the results.
@@ -1032,7 +1171,6 @@ class SimulationResults:
     def from_analysis(
         self,
         analysis: TransientAnalysis,
-        config: CapacitorStorageSimConfig | None = None,
     ):
         """Updates values from the analysis of a simulation.
 
@@ -1041,12 +1179,12 @@ class SimulationResults:
 
         It is important that the analysis is not stored in this class.
 
+        The function `_parse_config` is required to parse the configuration and
+        set the internal parameters.
+
         Args:
             analysis: Results from pyspice transient simulation
-            config: Simulation config.
         """
-
-        self._parse_config(config)
 
         self.ts = {}
 
@@ -1102,7 +1240,7 @@ class SimulationResults:
         self.src_energy = self._get_src_energy(analysis)[-1]
         self.sink_energy = self._get_sink_energy(analysis)[-1]
         self.diff_energy = self._get_diff_energy(analysis)[-1]
-        self.cap_energy = self._get_sum_cap_energy(analysis)[-1]
+        self.cap_energy = self._get_final_cap_energy(analysis)
 
     def _get_src_energy(self, analysis) -> ArrayLike:
         """Get source energy at each timestep.
@@ -1144,13 +1282,16 @@ class SimulationResults:
         return np.asarray(energy)
 
     def _get_diff_energy(self, analysis) -> ArrayLike:
-        """Get difference between source and sink energy.
+        """Get difference between source, sink, and capacitor.
 
         Returns:
             Cumulative sum of energy at each timestep.
         """
 
-        diff = self._get_src_energy(analysis) - self._get_sink_energy(analysis)
+        diff = self._get_src_energy(analysis)
+        diff -= self._get_sink_energy(analysis)
+        diff -= self._get_sum_cap_energy(analysis)
+
         return diff
 
     def _get_cap_energy(self, analysis) -> list[ArrayLike]:
@@ -1183,14 +1324,27 @@ class SimulationResults:
 
         return total_energy
 
+    def _get_final_cap_energy(self, analysis) -> ArrayLike:
+        """Get the sum of energy in all capacitors.
+
+        Returns:
+            Energy at each timestamp.
+        """
+
+        energy_list = self._get_cap_energy(analysis)
+
+        final_energy = np.sum([arr[-1] for arr in energy_list])
+
+        return final_energy
+
 
 class SimulationPlotter:
-    def __init__(self, layout: str = "moasic"):
+    def __init__(self, layout: str = "mosaic"):
         """Initialize a plotter.
 
         Valid options for layout is the following:
-            "individual": Each plot gets it's own figure.
-            "moasic": All plots shown in the same figure.
+            "individual": Each plot gets its own figure.
+            "mosaic": All plots shown in the same figure.
 
         Args:
             layout: Type of plot layout.
@@ -1211,16 +1365,26 @@ class SimulationPlotter:
             "cap_current",
             # plots that show summary of results
             "final_energy",
+            "final_counts",
+            "final_transitions",
+            # plots for events
+            "event_vertical",
+            "event_shaded",
+            "event_line",
         ]
 
         if layout == "individual":
             figs = {n: plt.figure() for n in plot_names}
 
-        elif layout == "moasic":
+        elif layout == "mosaic":
             ts_fig = plt.figure(figsize=(16, 12))
             ts_subfigs = ts_fig.subfigures(4, 3)
 
             fin_fig = plt.figure()
+            fin_subfigs = fin_fig.subfigures(3, 1)
+
+            event_fig = plt.figure()
+            event_subfigs = event_fig.subfigures(1, 3)
 
             figs = {
                 "input_output": ts_subfigs[0][0],
@@ -1233,7 +1397,12 @@ class SimulationPlotter:
                 "cap_current": ts_subfigs[2][2],
                 "energy": ts_subfigs[3][0],
                 "cap_energy": ts_subfigs[3][1],
-                "final_energy": fin_fig,
+                "final_energy": fin_subfigs[0],
+                "final_transitions": fin_subfigs[1],
+                "final_counts": fin_subfigs[2],
+                "event_vertical": event_subfigs[0],
+                "event_shaded": event_subfigs[1],
+                "event_line": event_subfigs[2],
             }
 
         else:
@@ -1266,6 +1435,16 @@ class SimulationPlotter:
 
         return self.figs[name]
 
+    def plot(self, results: list[SimulationResults]):
+        """Plot results
+
+        Args:
+            results: List of simulation results
+        """
+
+        self.plot_multiple_ts(results)
+
+
     def plot_single_ts(self, res: SimulationResults):
         """Plots single simulation results on new figure.
 
@@ -1292,6 +1471,13 @@ class SimulationPlotter:
         self._plot_energy(self.get_fig("energy"), results)
         self._plot_cap_energy(self.get_fig("cap_energy"), results)
         self._plot_cap_current(self.get_fig("cap_current"), results)
+        self._plot_event_vertical(self.get_fig("event_vertical"), results)
+        self._plot_event_shaded(self.get_fig("event_shaded"), results)
+        self._plot_event_line(self.get_fig("event_line"), results)
+
+        self._plot_final_energy(self.get_fig("final_energy"), results)
+        self._plot_final_counts(self.get_fig("final_counts"), results)
+        self._plot_final_transitions(self.get_fig("final_transitions"), results)
 
     def _plot_capacitors(
         self,
@@ -1638,61 +1824,300 @@ class SimulationPlotter:
             max_plines = max(res.p_lines, max_plines)
         return max_plines
 
-    def plot_final(self, results: list[SimulationResults]):
-        """Plots the final results from the simulation."""
-
-        self._plot_final_energy(self.get_fig("final_energy"), results)
-
     def _plot_final_energy(self, fig: Figure, results: list[SimulationResults]):
-        # keys in results.ts to plot, in bar order
-        keys = ["e_src", "e_sink", "e_diff", "e_sum_caps"]
-        n_groups = len(results)
-        n_bars = len(keys)
+        ax = fig.subplots()
 
-        names = [res.name for res in results]
+        # Okabe-Ito colorblind-safe palette
 
-        # Okabe-Ito palette: designed to be distinguishable under the
-        # common forms of color vision deficiency
-        colors = [
-            "#0072B2",
-            "#E69F00",
-            "#009E73",
-            "#CC79A7",
-            "#56B4E9",
-            "#D55E00",
-            "#F0E442",
-            "#000000",
-        ]
-        hatches = ["", "//", "..", "xx", "\\\\", "++", "oo", "--"]
+        colors = {
+            "Source":    "tab:blue",
+            "Sinked":    "tab:orange",
+            "Remaining": "tab:green",
+            "Lost":      "tab:red",
+        }
+        hatches = {
+            "Source":    "",
+            "Sinked":    "",
+            "Remaining": "//",
+            "Lost":      "..",
+        }
+        bar_style = {
+            "edgecolor": "black",
+            "linewidth": 0.6,
+        }
 
-        x = np.arange(n_groups)
-        width = 0.8 / n_bars  # total group width of 0.8
+        run_names = [res.name for res in results]
+        x = np.arange(len(run_names))
+        width = 0.35
+        gap = 0.0
+        offset = (width + gap) / 2
+
+        src = np.array([res.src_energy for res in results])
+        sink_energies = {
+            "Sinked":    np.array([res.sink_energy for res in results]),
+            "Remaining": np.array([res.cap_energy  for res in results]),
+            "Lost":      np.array([res.diff_energy for res in results]),
+        }
+
+        ax.bar(x - offset, src, width, label="Source",
+               color=colors["Source"], hatch=hatches["Source"], **bar_style)
+
+        bottom = np.zeros(len(results))
+        for label, energy in sink_energies.items():
+            ax.bar(x + offset, energy, width, bottom=bottom, label=label,
+                   color=colors[label], hatch=hatches[label], **bar_style)
+            bottom += energy
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(run_names)
+        ax.set_ylabel("Energy (J)")
+        ax.axhline(0, color="black", linewidth=0.8)
+
+        # Clean, publication-style axes
+        ax.tick_params(direction="out")
+        ax.legend()
+
+
+
+    def _plot_final_counts(self, fig: Figure, results: list[SimulationResults]):
+        """Plot the event counts per run."""
+
+        if not self._all_events(results):
+            self._plot_text(fig, "No events")
+            return
 
         ax = fig.subplots()
 
-        for i, key in enumerate(keys):
-            # final value of each run's time series
-            values = [r.ts[key][-1] for r in results]
-            # Offset so the bars in each group are centered on the tick
-            offset = (i - (n_bars - 1) / 2) * width
-            bars = ax.bar(
-                x + offset,
-                values,
-                width,
-                label=key,
-                color=colors[i % len(colors)],
-                hatch=hatches[i % len(hatches)],
-                edgecolor="black",
-                linewidth=0.8,
-            )
-            ax.bar_label(bars, fmt="%.2g", padding=2, fontsize=8)
+        run_names = [res.name for res in results]
 
-        ax.set_xticks(x)
-        ax.set_xticklabels(names)
-        ax.set_ylabel("Energy (J)")
-        ax.set_title("Final Energy")
-        ax.axhline(0, color="black", linewidth=0.8)  # diff can be negative
+        # get unique names among all results
+        event_names = set()
+        for res in results:
+            event_names |= set(res.unique_events())
+
+        # check for no events
+        if not event_names:
+            return
+
+        # build dictionary for grouped bar
+        event_counts = {name: [] for name in event_names}
+        for res in results:
+            for name in res.unique_events():
+                event_counts[name].append(res.event_count(name))
+
+        bar = ax.grouped_bar(event_counts, tick_labels=run_names, group_spacing=1)
+
+        # modify bars
+        hatches = ["", "//", "\\\\", "xx", "..", "++", "oo", "--", "**"]
+        for i, container in enumerate(bar.bar_containers):
+            for rect in container:
+                rect.set_hatch(hatches[i % len(hatches)])
+                rect.set_edgecolor("black")
+                rect.set_linewidth(0.5)
+            ax.bar_label(container, padding=3)
+
+        ax.set_ylabel("Count")
+        # Account for space above the bars
+        ax.margins(y=0.25)
         ax.legend()
+
+
+    def _plot_final_transitions(self, fig: Figure, results: list[SimulationResults]):
+        """Plot the number of transitions per run."""
+
+        if not self._all_events(results):
+            self._plot_text(fig, "No events")
+            return
+
+        ax = fig.subplots()
+
+        run_names = [res.name for res in results]
+
+        transitions = {
+            "Total": [res.event_count() for res in results],
+            "Cycles": [res.event_cycles("50s", "70s") for res in results],
+            "Failure": [res.event_failures() for res in results],
+        }
+
+        bar = ax.grouped_bar(transitions, tick_labels=run_names, group_spacing=1)
+
+        # modify bars
+        hatches = ["", "//", "\\\\", "xx", "..", "++", "oo", "--", "**"]
+        for i, container in enumerate(bar.bar_containers):
+            for rect in container:
+                rect.set_hatch(hatches[i % len(hatches)])
+                rect.set_edgecolor("black")
+                rect.set_linewidth(0.5)
+            ax.bar_label(container, padding=3)
+
+        ax.set_ylabel("Count")
+        # Account for space above the bars
+        ax.margins(y=0.25)
+        ax.legend()
+
+    def _plot_event_vertical(self, fig: Figure, results: list[SimulationResults]):
+        """Plots vertical lines at each event.
+        """
+
+        if not self._all_events(results):
+            self._plot_text(fig, "No events")
+            return
+
+        num_plots = len(results)
+        axs = fig.subplots(num_plots, sharex=True, squeeze=False)
+
+        colors: dict[str, str] = {}
+        for ax, result in zip(axs[:][0], results):
+            seen = set()
+            for event in result.events:
+                # sets the color if it does not exist
+                color = colors.setdefault(event.name, f"C{len(colors)}")
+                label = event.name if event.name not in seen else None
+                ax.axvline(x=event.time, label=label, color=color)
+                seen.add(event.name)
+
+            ax.set_ylabel(result.name)
+
+
+        for ax in axs[:][0]:
+            # remove ticks
+            ax.set_yticks([])
+
+            ax.set_xlim(self._start(results), self._end(results))
+
+            ax.grid()
+            ax.legend()
+
+        axs[-1][0].set_xlabel("Time (s)")
+
+    def _plot_event_shaded(self, fig: Figure, results: list[SimulationResults]):
+        """Plots shaded regions in time between events.
+        """
+
+        if not self._all_events(results):
+            self._plot_text(fig, "No events")
+            return
+
+        num_plots = len(results)
+        axs = fig.subplots(num_plots, 1, sharex=True, squeeze=False)
+
+        colors: dict[str, str] = {}
+        for ax, result in zip(axs[:][0], results):
+            seen = set()
+            events = sorted(result.events)
+
+            for start, end in zip(events, events[1:]):
+                # skip if flagged to ignore
+                if start.ignore:
+                    continue
+
+                color = colors.setdefault(start.name, f"C{len(colors)}")
+                label = start.name if start.name not in seen else None
+                ax.axvspan(start.time, end.time, color=color, alpha=0.3, label=label)
+                seen.add(start.name)
+
+            ax.set_ylabel(result.name)
+
+        for ax in axs[:][0]:
+            # remove ticks
+            ax.set_yticks([])
+            ax.set_xlim(self._start(results), self._end(results))
+            ax.grid(axis="x")
+            ax.legend()
+
+        axs[-1][0].set_xlabel("Time (s)")
+
+
+
+    def _plot_event_line(self, fig: Figure, results: list[SimulationResults]):
+        """Plot lines between events with color-coded markers at each transition."""
+
+        if not self._all_events(results):
+            self._plot_text(fig, "No events")
+            return
+
+        num_plots = len(results)
+        axs = fig.subplots(num_plots, 1, sharex=True, sharey=True, squeeze=False)[:, 0]
+
+        # Discrete level and color per event name, shared across all subplots
+        levels: dict[str, int] = {}
+        for result in results:
+            for event in sorted(result.events):
+                levels.setdefault(event.name, len(levels))
+        colors = {name: f"C{i}" for name, i in levels.items()}
+
+        for ax, result in zip(axs, results):
+            events = sorted(result.events)
+
+            # Connecting line drawn first, underneath the markers
+            ax.plot(
+                [e.time for e in events],
+                [levels[e.name] for e in events],
+                color="lightgray",
+                zorder=1,
+            )
+
+            # One scatter call per name gives one legend entry per name
+            for name, level in levels.items():
+                times = [e.time for e in events if e.name == name]
+                if not times:
+                    continue
+                ax.scatter(
+                    times,
+                    [level] * len(times),
+                    color=colors[name],
+                    label=name,
+                    s=50,
+                    zorder=3,
+                )
+
+            ax.set_ylabel(result.name)
+            ax.set_xlim(self._start(results), self._end(results))
+            ax.grid(axis="x")
+            ax.legend()
+
+        # sharey=True, so setting ticks on the first axes applies to all
+        axs[0].set_yticks(list(levels.values()), labels=list(levels.keys()))
+        axs[0].set_ylim(-0.5, len(levels) - 0.5)
+
+        axs[-1].set_xlabel("Time (s)")
+
+
+    def _plot_text(self, fig: Figure, text: str):
+        """Plots text in place of a figure.
+
+        Args:
+            fig: Figure object
+            text: Text to display
+        """
+
+        ax = fig.subplots()
+
+        # Hide the axes borders, ticks, and labels
+        ax.axis('off')
+
+        # Display the text in the center of the figure
+        ax.text(
+            0.5, 0.5,
+            text,
+            horizontalalignment="center",
+            verticalalignment="center",
+            transform=ax.transAxes,
+            fontsize=14,
+            color="gray",
+            style="italic"
+        )
+
+
+    def _all_events(self, results: list[SimulationResults]) -> set[Event]:
+        """Check if results have events."""
+
+        events = set()
+        for res in results:
+            events.update(res.events)
+
+        return events
+
 
     def show(self):
         plt.show(block=False)
@@ -1712,6 +2137,17 @@ class SimulationPlotter:
         """
 
         return
+
+    def _start(self, results: list[SimulationResults]) -> float:
+        """Minimum start time for all results."""
+
+        return min([res.start() for res in results])
+
+    def _end(self, results: list[SimulationResults]) -> float:
+        """Maximum end time for all results."""
+
+        return max([res.end() for res in results])
+
 
 
 class CapacitorStorageSim:
@@ -1751,6 +2187,7 @@ class CapacitorStorageSim:
             super().__init__(**kwargs)
             self.config = config
             self.progress = progress
+            self.events: list[Event] = []
 
         def _drive_voltage(self, state: int) -> float:
             """Converts a switch state to drive voltage
@@ -1846,7 +2283,9 @@ class CapacitorStorageSim:
             time = data["time"].real
 
             # uesr defined callback
-            self.config.callback(time)
+            event = self.config.callback(time)
+            if event:
+                self.events.append(event)
 
             # progress callback
             if self.progress:
@@ -1862,6 +2301,9 @@ class CapacitorStorageSim:
         config: CapacitorStorageSimConfig,
         plotter: SimulationPlotter | None = None,
         progress: Callable[[float], None] | None = None,
+        r_min: float = 1e-3,
+        r_max: float = 1e9,
+        c_bypass: float = 1e-6,
     ):
         """Create a simulation instance with a given configuration.
 
@@ -1869,6 +2311,9 @@ class CapacitorStorageSim:
             config: Configuration
             plotter: Plotter object
             progress: Callback function to take progress
+            r_min: Minimum resistance for power source/sinks
+            r_max: Maximum resistance for power source/sinks
+            c_bypass: Bypass capacitors values
         """
 
         self.config = config
@@ -1882,8 +2327,9 @@ class CapacitorStorageSim:
         self.shared = self.CustomShared(config, progress, send_data=True)
 
         # limited min/max resistance for load
-        self.load_min_r = 1e-9
-        self.load_max_r = 1e9
+        self.r_min = r_min
+        self.r_max = r_max
+        self.c_bypass = c_bypass
 
     def _create_circuit(self) -> Circuit:
         """Creates the circuit model
@@ -1920,15 +2366,22 @@ class CapacitorStorageSim:
         # input source
         # TODO Chance to the param for constant voltage source
         circuit.V("_src", "v_src_pos", circuit.gnd, "dc 0 external")
-        circuit.C("_src", "src", circuit.gnd, 100e-6)
+        circuit.C("_src", "src", circuit.gnd, self.c_bypass)
 
         circuit.V("_pwr_source", "v_pwr_source", circuit.gnd, "dc 0 external")
+        circuit.BehavioralSource(
+            "_r_source_raw",
+            "v_r_source_raw",
+            circuit.gnd,
+            voltage_expression="{(V(src)*V(v_src_pos) - V(src)**2)/V(v_pwr_source)}",
+        )
         circuit.BehavioralSource(
             "_r_source",
             "v_r_source",
             circuit.gnd,
-            voltage_expression="{min(max(abs(V(v_src_pos)**2/V(v_pwr_source)), 0.01), 1e6)}",
+            voltage_expression=f"{{min(max(abs(V(v_r_source_raw)), {self.r_min}), {self.r_max})}}",
         )
+
 
         circuit.raw_spice += "R1 v_src_pos src R='{V(v_r_source)}'\n"
 
@@ -2058,8 +2511,7 @@ class CapacitorStorageSim:
         # volts over which the load fades in
         width = 0.001
         # 1 / 1e9 ohm
-        r_max = 1e9
-        g_off = 1 / r_max
+        g_off = 1 / self.r_max
 
         # G_on = P / V^2, guarded against P = 0 and V near 0
         g_on = f"max(v(v_pwr_sink), 1e-3) / max(v(sink), {v_min})**2"
@@ -2069,7 +2521,7 @@ class CapacitorStorageSim:
             "_r_sink",
             "v_r_sink",
             circuit.gnd,
-            voltage_expression=f"min(1 / ({g_off} + {g_on} * {ramp}), {r_max})",
+            voltage_expression=f"max(min(1 / ({g_off} + {g_on} * {ramp}), {self.r_max}), {self.r_min})",
         )
 
         # Old voltage expression for reference. The instantaneous transition
@@ -2083,11 +2535,24 @@ class CapacitorStorageSim:
         circuit.raw_spice += "R2 sink gnd {v(v_r_sink)}\n"
 
         # small buffer cap
-        circuit.C("_sink", "sink", circuit.gnd, 1e-6)
+        circuit.C("_sink", "sink", circuit.gnd, self.c_bypass)
 
         return circuit
 
-    def _simulate(self, circuit: Circuit, end_time: float = 2.0):
+    def _simulate(self, circuit: Circuit, end_time: float = 2.0) -> tuple:
+        """Run the simulation and get the results.
+
+        Args:
+            circuit: Spice circuit
+            end_time: Simulation duration
+
+        Returns:
+            Tuple with PySpice analysis and events during the simulation.
+
+        Raises:
+            Runtime error when values exceed the tolerance.
+        """
+
         self.simulator = circuit.simulator(
             temperature=25,
             nominal_temperature=25,
@@ -2115,7 +2580,36 @@ class CapacitorStorageSim:
             use_initial_condition=True,
         )
 
-        return analysis
+        # check source resistance tolerance
+        r_src = np.asarray(analysis["v_r_source"])
+        if self._exceeded_r_limit(r_src):
+            raise RuntimeError("Source resistance exceed tolerance bounds.")
+
+        ## check sink resistance tolerance
+        r_sink = np.asarray(analysis["v_r_sink"])
+        if self._exceeded_r_limit(r_sink):
+            raise RuntimeError("Sink resistance exceed tolerance bounds.")
+
+        return analysis, self.shared.events
+
+
+    def _exceeded_r_limit(
+        self,
+        res: np.ndarray,
+        tol: float = 0.01,
+    ):
+        """CHecks the resistance limits for power.
+
+        Args:
+            analysis: Simulation analysis
+            tol: Percent tolerance
+        """
+
+        # Allow 1% tolerance between the bonds
+        tol_min = self.r_min * (1. - tol)
+        tol_max = self.r_max * (1. + tol)
+
+        return res.min() <= tol_min or tol_max <= res.max()
 
     def run(self, end_time: float = 2.0) -> SimulationResults:
         """Run the simulation on a set of capacitor values.
@@ -2126,11 +2620,10 @@ class CapacitorStorageSim:
         """
 
         circuit = self._create_circuit()
-        analysis = self._simulate(circuit)
+        analysis, events = self._simulate(circuit)
 
         # Calculate results
-        results = SimulationResults()
-        results.from_analysis(analysis, self.config)
+        results = SimulationResults(analysis, self.config, events)
 
         # save to class
         self.circuit = circuit
@@ -2435,6 +2928,42 @@ class SimulationRunner:
 
         return results
 
+
+    def save(self, directory: str):
+        """Save collection of results to directory.
+
+        Args:
+            directory: Directory containing pickles
+        """
+
+        os.makedirs(directory, exist_ok=True)
+
+        for res in self.results:
+            path = os.path.join(directory, res.name)
+            res.save(path)
+
+
+    @staticmethod
+    def load(directory: str) -> list[SimulationResults]:
+        """Load collection of results from a directory.
+
+        Args:
+            directory: Directory containing pickles
+
+        Returns:
+            List of simulation results
+        """
+
+        results = []
+        for root, _, files in os.walk(directory):
+            for f in files:
+                path = os.path.join(root, f)
+                res = SimulationResults.load(path)
+                results.append(res)
+
+        return results
+
+
     def _run_sim(
         self, idx: int, config: CapacitorStorageSimConfig, queue: Queue
     ) -> SimulationResults:
@@ -2465,10 +2994,53 @@ class SimulationRunner:
 
     def plot(self):
         self.plotter.plot_multiple_ts(self.results)
-        self.plotter.plot_final(self.results)
 
     def show(self):
         self.plotter.show()
+
+
+
+def capacitor_list(_min: float, _max: float, decade: str = "E6") -> list[float]:
+    """Creates a E6 capacitor value list between two values.
+
+    Args:
+        _min: Minimum farads
+        _max: Maximum farads
+
+    Returns:
+        List of capacitor values.
+    """
+
+    if decade == "E3":
+        values = [10.0, 22.0, 47.0]
+    elif decade == "E6":
+        values = [10.0, 15.0, 22.0, 33.0, 47.0, 68.0]
+    elif decade == "E12":
+        values = [10.0, 12.0, 15.0, 18.0, 22.0, 27.0, 33.0, 39.0, 47.0, 56.0,
+                  68.0, 82.0]
+    else:
+        raise NotImplementedError(f"Decade {decade} is not implemented.")
+
+    if _min <= 0 or _max <= 0:
+        raise ValueError("_min and _max must be positive.")
+    if _min > _max:
+        raise ValueError("_min must not exceed _max.")
+
+    # Base values span 10..82, so each one is value * 10**k.
+    # Pick a range of exponents wide enough to cover [_min, _max].
+    low_exp = math.floor(math.log10(_min)) - 2
+    high_exp = math.ceil(math.log10(_max))
+
+    result = []
+    for exp in range(low_exp, high_exp + 1):
+        for v in values:
+            # Build from an integer exponent via string-free scaling;
+            # round to avoid float noise like 4.7000000000000004e-06
+            c = float(f"{v}e{exp}")
+            if _min <= c <= _max:
+                result.append(c)
+
+    return result
 
 
 class SineShared(NgSpiceShared):

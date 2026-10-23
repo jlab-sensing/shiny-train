@@ -7,26 +7,14 @@ import time
 from sim.callback import LeacSimConfig
 from sim.models import (
     BonitoSource,
+    RWSource,
     CVCapacitor,
     IdealCapacitor,
     SimulationRunner,
     SMSink,
     simulation_config_matrix,
 )
-from sim.state_machines import MATRSinkSM, Task
-
-
-def create_tasks() -> list:
-    CONST_VOLTAGE = 3.2
-
-    tasks = [  # bookkeeping for LeacSimConfig; SMSink is hardcoded with identical Tasks
-        Task(cost=11.68e-4 * CONST_VOLTAGE, duration=0.511, name="measure"),
-        Task(cost=2 * 11.68e-4 * CONST_VOLTAGE, duration=0.511, name="analyze"),
-        Task(cost=86.52e-4 * CONST_VOLTAGE, duration=0.285, name="tx"),
-        Task(cost=20.03e-4 * CONST_VOLTAGE, duration=0.937, name="rx"),
-    ]
-
-    return tasks
+from sim.state_machines import MATRSinkSM
 
 
 if __name__ == "__main__":
@@ -37,40 +25,40 @@ if __name__ == "__main__":
     ]
 
     configs = simulation_config_matrix(
-        [IdealCapacitor, CVCapacitor],
+        [CVCapacitor],
         caps,
+        [BonitoSource, BonitoSource, BonitoSource, BonitoSource],
+        # [RWSource],
         [
-            BonitoSource(datapath="/home/mwmaster/catch/"),
-            BonitoSource(datapath="/home/mwmaster/catch/"),
-            BonitoSource(datapath="/home/mwmaster/catch/"),
-            BonitoSource(datapath="/home/mwmaster/catch/")
+            {"duration": 1200, "downsample": 10000, "name": "node0"},
+            {"duration": 1200, "downsample": 10000, "name": "node1"},
+            {"duration": 1200, "downsample": 10000, "name": "node2"},
+            {"duration": 1200, "downsample": 10000, "name": "node3"},
         ],
-        [
-            {"duration": 1200, "downsample": 30000, "name": "node0"},
-            {"duration": 1200, "downsample": 30000, "name": "node1"},
-            {"duration": 1200, "downsample": 30000, "name": "node2"},
-            {"duration": 1200, "downsample": 30000, "name": "node3"},
-        ],
+        # [
+        #     {
+        #         "duration": 200,
+        #         "dt":0.01
+        #     }
+        # ],
         [SMSink],
         {"sink": MATRSinkSM()},
         [LeacSimConfig],
         {
             "p_lines": 2,
-            "tasks": create_tasks(),
             "cap_limit": 2,
-            "initial_cap_idx": 0,
-            "replan_depth": 3,
+            # "replan_depth": -1,
+            "replan_depth": 2,
+            "energy_constraint": False,
+            "harvest_routing": 'fallback',
+            "solver": 'qp',
+            # "solver": 'lp',
+            "qp_weighting": 'weighted',
+            # "qp_weighting": 'unweighted',
+
         },
-        names=[
-            "Ideal/node0",
-            "Ideal/node1",
-            "Ideal/node2",
-            "Ideal/node3",
-            "CV/node0",
-            "CV/node1",
-            "CV/node2",
-            "CV/node3",
-        ],
+        # names=[f"unweighted/src{i}" for i in range(4)],
+        names=[f"weighted/src{i}" for i in range(4)],
     )
 
     runner = SimulationRunner(configs)

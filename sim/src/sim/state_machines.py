@@ -9,7 +9,18 @@ from .models import Capacitor
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-DC_VOLTS = 3.3
+DC_VOLTS = 3.2
+
+a = 0.95
+b = 0.02
+# a = 0.60
+# b = 0.30
+TRANSITION_MATRIX = {
+    'measure': np.array([0, 1, 0, 0]),
+    'analyze': np.array([a, 0, (1-a), 0]),
+    'tx': np.array([0, 0, 0, 1]),
+    'rx': np.array([(1-b), 0, b, 0])
+}
 
 
 @dataclass(frozen=True)
@@ -61,8 +72,10 @@ class MTRSinkSM(StateChart):
                 and hasattr(state, "value")
                 and isinstance(state.value, Task)
             ):
-                return state.id
-        return None
+                id = state.id
+                child_substates = np.argwhere(self.transitions[id])
+                return id, child_substates
+        return None, None
 
     def _get_current_state_id(self):
         for state in self.configuration:
@@ -114,7 +127,7 @@ class MTRSinkSM(StateChart):
             energy = self.cap.energy
             min_energy = self.cap.min_energy
             self.remaining_time = task.duration - self.time + self.task_start
-            projected_energy = energy + task.cost * self.remaining_time
+            projected_energy = energy - task.cost * self.remaining_time
 
             if projected_energy <= min_energy:
                 self.raise_("pause")
@@ -127,10 +140,13 @@ class MTRSinkSM(StateChart):
 class MATRSinkSM(StateChart):
     cap = None
     time = None
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(seed=42)
     task_start = 0.0
     remaining_time = 0.0
-    load_value = 4.64e-3 * DC_VOLTS  # OUTPUT: the energy consumption for next timestep
+    load_value = 4.64e-4 * DC_VOLTS  # OUTPUT: the energy consumption for next timestep
+    transitions = TRANSITION_MATRIX
+    TASK_NAMES = ['measure', 'analyze', 'tx', 'rx']
+    wake_energy = None
 
     class task(State.Compound):
         measure = State(
@@ -149,7 +165,8 @@ class MATRSinkSM(StateChart):
         )
         h = HistoryState(type="deep")
 
-    sleep = State("sleep", initial=True, value=4.64e-4 * DC_VOLTS)
+    sleep = State("sleep", initial=True, value=Task(cost=4.64e-4 * DC_VOLTS, duration=0.01, name="sleep"))
+    # sleep = State("sleep", initial=True, value=4.64e-4 * DC_VOLTS)
     # replan = State("replan", value=4.64e-4 * DC_VOLTS)
 
     # Self-transitions while executing, advance when done
@@ -178,9 +195,19 @@ class MATRSinkSM(StateChart):
                 state.is_active
                 and hasattr(state, "value")
                 and isinstance(state.value, Task)
+                and state.id == 'sleep'
             ):
-                return state.id
-        return None
+                id = state.id
+                return id, np.array([[0]])
+            elif (
+                state.is_active
+                and hasattr(state, "value")
+                and isinstance(state.value, Task)
+            ):
+                id = state.id
+                child_substates = np.argwhere(self.transitions[id])
+                return id, child_substates
+        return None, None
 
     def _get_current_state_id(self):
         for state in self.configuration:
@@ -236,7 +263,11 @@ class MATRSinkSM(StateChart):
         return np.abs(self.rng.standard_normal()) >= n
 
     def charged(self):
-        return self.cap.voltage >= self.cap.v_max
+        need = getattr(self, "wake_energy", None)
+        if need is None:
+            return self.cap.voltage >= self.cap.v_max
+        return self.cap.energy - self.cap.min_energy >= need
+
 
     def recharging(self):
         return self.cap.voltage < self.cap.v_max
@@ -250,7 +281,7 @@ class MATRSinkSM(StateChart):
             energy = self.cap.energy
             min_energy = self.cap.min_energy
             self.remaining_time = task.duration - self.time + self.task_start
-            projected_energy = energy + task.cost * self.remaining_time
+            projected_energy = energy - task.cost * self.remaining_time
 
             if projected_energy <= min_energy:
                 self.raise_("pause")
@@ -283,7 +314,7 @@ class TestSinkSM(MTRSinkSM):
                 ) ** 0.5
 
 
-def init_MTRSinkSM(cap, testing=True):
+def init_MTRSinkSM(cap, testing=False):
     if testing:
         sm = TestSinkSM()
     else:
@@ -294,11 +325,8 @@ def init_MTRSinkSM(cap, testing=True):
     return sm
 
 
-def init_MATRSinkSM(cap, testing=True):
-    if testing:
-        sm = TestSinkSM()
-    else:
-        sm = MATRSinkSM()
+def init_MATRSinkSM(cap, testing=False):
+    sm = MATRSinkSM()
     sm.cap = cap
     sm.task_start = 0.0
     sm.time = 0.0
