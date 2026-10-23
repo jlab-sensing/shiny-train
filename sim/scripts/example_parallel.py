@@ -26,7 +26,7 @@ class MyConfig(CapacitorStorageSimConfig):
 
     def callback(self, time: float):
 
-        events = []
+        event = None
 
         # connect caps
         for cap in self.caps:
@@ -40,18 +40,18 @@ class MyConfig(CapacitorStorageSimConfig):
             self.sink.connect(0)
 
         if time >= self.next_50:
-            events.append(Event("50s", time))
+            event = Event("50s", time)
             self.next_50 += 500.0
 
         if time >= self.next_70:
-            events.append(Event("70s", time))
+            event = Event("70s", time)
             self.next_70 += 700.0
 
         if time >= self.next_90:
-            events.append(Event("90s", time, ignore=True))
+            event = Event("90s", time, ignore=True)
             self.next_90 += 900.0
 
-        return events
+        return event
 
 
 def create_config(caps: list[Capacitor]):

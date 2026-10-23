@@ -52,6 +52,7 @@ from .models import (
     CapacitorStorageSimConfig,
     LeacsCapacitor,
     SMSink,
+    Event,
 )
 from .state_machines import Task, init_MTRSinkSM
 
@@ -944,8 +945,14 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         self.last_substate = None
         self.depth = 0
 
+        # get the last substate for all states
+        # gets updated at every timestep
+        self.last_substate_all = None
+
 
     def callback(self, time: float):
+
+        event = None
 
         active_substate, child_substates = self.sm._get_task_state_id()
 
@@ -1011,7 +1018,22 @@ class LeacSimConfig(CapacitorStorageSimConfig):
 
         if active_substate != 'sleep':
             self.last_substate = active_substate
+
+        # check if state is different from lsat timestep
+        if active_substate != self.last_substate_all:
+            # store event
+            if active_substate == "sleep":
+                event = Event(active_substate, time, ignore=True)
+            else:
+                event = Event(active_substate, time)
+            # update last event
+            self.last_substate_all = active_substate
+
+
+        # run the state machine
         self._update_sink()
+
+        return event
 
     def _decode_assignment_result(
         self,

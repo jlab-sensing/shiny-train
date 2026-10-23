@@ -884,16 +884,19 @@ class CapacitorStorageSimConfig:
 
         return [c.farads for c in self.caps]
 
-    def callback(self, time: float) -> list[Event]:
+    def callback(self, time: float) -> Event | None:
         """Callback function to perform actions during sim runtime.
 
         This function should be overwritten by the user.
 
         Args:
             time: Timestep of simulation
+
+        Returns:
+            Event that happened at `time`
         """
 
-        return []
+        return None
 
 
 class SimulationResults:
@@ -2072,9 +2075,9 @@ class CapacitorStorageSim:
             time = data["time"].real
 
             # uesr defined callback
-            events = self.config.callback(time)
-            if events:
-                self.events += events
+            event = self.config.callback(time)
+            if event:
+                self.events.append(event)
 
             # progress callback
             if self.progress:
