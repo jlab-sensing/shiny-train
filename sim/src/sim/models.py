@@ -935,6 +935,23 @@ class SimulationResults:
         else:
             self.events = []
 
+    def start(self) -> float:
+        """Start time of the simulation.
+
+        Returns:
+            Start time
+        """
+
+        return self.ts["time"][0]
+
+    def end(self) -> float:
+        """End time of the simulation.
+
+        Returns:
+            End time
+        """
+
+        return self.ts["time"][-1]
 
     def save(self, path: str = ""):
         """Save results to a path.
@@ -1846,10 +1863,12 @@ class SimulationPlotter:
             # remove ticks
             ax.set_yticks([])
 
+            ax.set_xlim(self._start(results), self._end(results))
+
             ax.grid()
             ax.legend()
 
-        axs[0].set_xlabel("Time (s)")
+        axs[-1].set_xlabel("Time (s)")
 
     def _plot_event_shaded(self, fig: Figure, results: list[SimulationResults]):
         """Plots shaded regions in time between events.
@@ -1878,12 +1897,11 @@ class SimulationPlotter:
         for ax in axs:
             # remove ticks
             ax.set_yticks([])
-
-
+            ax.set_xlim(self._start(results), self._end(results))
             ax.grid(axis="x")
             ax.legend()
 
-        axs[0].set_xlabel("Time (s)")
+        axs[-1].set_xlabel("Time (s)")
 
 
 
@@ -1926,13 +1944,15 @@ class SimulationPlotter:
                 )
 
             ax.set_ylabel(result.name)
+            ax.set_xlim(self._start(results), self._end(results))
             ax.grid(axis="x")
             ax.legend()
 
         # sharey=True, so setting ticks on the first axes applies to all
         axs[0].set_yticks(list(levels.values()), labels=list(levels.keys()))
         axs[0].set_ylim(-0.5, len(levels) - 0.5)
-        axs[0].set_xlabel("Time (s)")
+
+        axs[-1].set_xlabel("Time (s)")
 
     def show(self):
         plt.show(block=False)
@@ -1952,6 +1972,17 @@ class SimulationPlotter:
         """
 
         return
+
+    def _start(self, results: list[SimulationResults]) -> float:
+        """Minimum start time for all results."""
+
+        return min([res.start() for res in results])
+
+    def _end(self, results: list[SimulationResults]) -> float:
+        """Maximum end time for all results."""
+
+        return max([res.end() for res in results])
+
 
 
 class CapacitorStorageSim:
