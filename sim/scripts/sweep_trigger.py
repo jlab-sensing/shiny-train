@@ -16,8 +16,7 @@ scales with the energy actually stored, rather than a fixed constant in J^2.
 from collections import defaultdict
 
 import numpy as np
-
-from sim.leaf_distribution import moments, sweep
+from sim.leaf_distribution import sweep, moments
 
 CONST_VOLTAGE = 3.3
 SCALE = 10.0  # measured power; 1.0 reproduces the earlier under-scaled values

@@ -1127,7 +1127,7 @@ class SimulationResults:
 
 
     @staticmethod
-    def load(path: str) -> SimulationResults:
+    def load(path: str) -> "SimulationResults":
         """Load results from a path.
 
         Returns an instance of an object from a saved binary.
