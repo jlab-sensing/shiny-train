@@ -7,15 +7,12 @@ import time
 from sim.callback import LeacSimConfig
 from sim.models import (
     BonitoSource,
-    RWSource,
     CVCapacitor,
-    IdealCapacitor,
     SimulationRunner,
     SMSink,
     simulation_config_matrix,
 )
 from sim.state_machines import MATRSinkSM
-
 
 if __name__ == "__main__":
     caps = [

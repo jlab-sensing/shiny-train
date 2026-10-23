@@ -13,20 +13,27 @@ Terminology (used in every label and caption):
 """
 from pathlib import Path
 
-import numpy as np
 import matplotlib
+import numpy as np
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
+import matplotlib.pyplot as plt
 import matplotlib.ticker
 from matplotlib.colors import ListedColormap, Normalize
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
-
-from sweep_trigger import (P, e, depth_profile, exact_tail, cantelli_bound,
-                           cantelli_lower, exact_required_budget, expected_completed,
-                           progress_steps, min_trajectory_energy)
+from sweep_trigger import (
+    P,
+    cantelli_bound,
+    cantelli_lower,
+    depth_profile,
+    e,
+    exact_required_budget,
+    exact_tail,
+    min_trajectory_energy,
+    progress_steps,
+)
 
 OUT = Path(__file__).resolve().parent / "figures"
 OUT.mkdir(exist_ok=True)

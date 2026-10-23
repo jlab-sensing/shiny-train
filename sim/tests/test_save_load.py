@@ -1,9 +1,8 @@
-import unittest
-
-from contextlib import redirect_stderr
 import io
-import tempfile
 import os
+import tempfile
+import unittest
+from contextlib import redirect_stderr
 
 from sim.models import (
     Capacitor,
@@ -11,12 +10,13 @@ from sim.models import (
     CapacitorStorageSimConfig,
     ConstantSink,
     ConstantSource,
+    CVCapacitor,
+    IdealCapacitor,
     SimulationPlotter,
     SimulationResults,
     SimulationRunner,
-    IdealCapacitor,
-    CVCapacitor,
 )
+
 
 class MyConfig(CapacitorStorageSimConfig):
     def callback(self, time: float):

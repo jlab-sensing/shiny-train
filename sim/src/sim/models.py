@@ -7,14 +7,14 @@ can be controlled from outside the original function.
 import copy
 import math
 import os
+import pickle
 import threading
 from abc import ABC
 from collections.abc import Callable
 from dataclasses import dataclass
+from itertools import pairwise
 from multiprocessing import Manager, Pool
 from queue import Queue
-import pickle
-from itertools import pairwise
 
 import h5py
 

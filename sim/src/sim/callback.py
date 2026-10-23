@@ -37,19 +37,17 @@ import scipy.sparse as sp
 from pyscipopt import Model, quicksum
 from pyscipopt.recipes.nonlinear import set_nonlinear_objective
 
+from .leaf_distribution import leaf_distribution
 from .models import (
-    ConstantSource,
-    SineSource,
-    BonitoSource,
     Capacitor,
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
-    LeacsCapacitor,
-    SMSink,
     Event,
+    LeacsCapacitor,
+    SineSource,
+    SMSink,
 )
-from .state_machines import Task, MATRSinkSM, init_MTRSinkSM
-from .leaf_distribution import leaf_distribution
+from .state_machines import MATRSinkSM, Task, init_MTRSinkSM
 
 SOLVERS = ("lp", "qp", "lp+qp")
 REPLAN_TRIGGERS = ("depth", "forecast", "both")

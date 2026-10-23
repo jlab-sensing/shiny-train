@@ -2,7 +2,6 @@ import unittest
 
 from sim.models import (
     Capacitor,
-    capacitor_list,
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
     ConstantSink,
@@ -10,6 +9,7 @@ from sim.models import (
     IdealCapacitor,
     LeacsCapacitor,
     PanasonicCapacitors,
+    capacitor_list,
 )
 
 

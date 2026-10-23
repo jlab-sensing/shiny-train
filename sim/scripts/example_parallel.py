@@ -13,9 +13,9 @@ from sim.models import (
     ConstantSink,
     ConstantSource,
     CVCapacitor,
+    Event,
     IdealCapacitor,
     SimulationRunner,
-    Event,
 )
 
 
