@@ -2131,6 +2131,9 @@ class CapacitorStorageSim:
         config: CapacitorStorageSimConfig,
         plotter: SimulationPlotter | None = None,
         progress: Callable[[float], None] | None = None,
+        r_min: float = 0.1,
+        r_max: float = 1e9,
+        c_bypass: float = 1e-6,
     ):
         """Create a simulation instance with a given configuration.
 
@@ -2138,6 +2141,9 @@ class CapacitorStorageSim:
             config: Configuration
             plotter: Plotter object
             progress: Callback function to take progress
+            r_min: Minimum resistance for power source/sinks
+            r_max: Maximum resistance for power source/sinks
+            c_bypass: Bypass capacitors values
         """
 
         self.config = config
@@ -2151,8 +2157,9 @@ class CapacitorStorageSim:
         self.shared = self.CustomShared(config, progress, send_data=True)
 
         # limited min/max resistance for load
-        self.load_min_r = 1e-9
-        self.load_max_r = 1e9
+        self.r_min = r_min
+        self.r_max = r_max
+        self.c_bypass = c_bypass
 
     def _create_circuit(self) -> Circuit:
         """Creates the circuit model.
@@ -2182,14 +2189,14 @@ class CapacitorStorageSim:
         # input source
         # TODO Chance to the param for constant voltage source
         circuit.V("_src", "v_src_pos", circuit.gnd, "dc 0 external")
-        circuit.C("_src", "src", circuit.gnd, 100e-6)
+        circuit.C("_src", "src", circuit.gnd, self.c_bypass)
 
         circuit.V("_pwr_source", "v_pwr_source", circuit.gnd, "dc 0 external")
         circuit.BehavioralSource(
             "_r_source",
             "v_r_source",
             circuit.gnd,
-            voltage_expression="{min(max(abs(V(v_src_pos)**2/V(v_pwr_source)), 0.01), 1e6)}",
+            voltage_expression=f"{{min(max(abs(V(v_src_pos)**2/V(v_pwr_source)), {self.r_min}), {self.r_max})}}",
         )
 
         circuit.raw_spice += "R1 v_src_pos src R='{V(v_r_source)}'\n"
@@ -2280,8 +2287,7 @@ class CapacitorStorageSim:
         # volts over which the load fades in
         width = 0.001
         # 1 / 1e9 ohm
-        r_max = 1e9
-        g_off = 1 / r_max
+        g_off = 1 / self.r_max
 
         # G_on = P / V^2, guarded against P = 0 and V near 0
         g_on = f"max(v(v_pwr_sink), 1e-3) / max(v(sink), {v_min})**2"
@@ -2291,7 +2297,7 @@ class CapacitorStorageSim:
             "_r_sink",
             "v_r_sink",
             circuit.gnd,
-            voltage_expression=f"min(1 / ({g_off} + {g_on} * {ramp}), {r_max})",
+            voltage_expression=f"max(min(1 / ({g_off} + {g_on} * {ramp}), {self.r_max}), {self.r_min})",
         )
 
         # Old voltage expression for reference. The instantaneous transition
@@ -2305,7 +2311,7 @@ class CapacitorStorageSim:
         circuit.raw_spice += "R2 sink gnd {v(v_r_sink)}\n"
 
         # small buffer cap
-        circuit.C("_sink", "sink", circuit.gnd, 1e-6)
+        circuit.C("_sink", "sink", circuit.gnd, self.c_bypass)
 
         return circuit
 
@@ -2318,6 +2324,9 @@ class CapacitorStorageSim:
 
         Returns:
             Tuple with PySpice analysis and events during the simulation.
+
+        Raises:
+            Runtime error when values exceed the tolerance.
         """
 
         self.simulator = circuit.simulator(
@@ -2347,7 +2356,36 @@ class CapacitorStorageSim:
             use_initial_condition=True,
         )
 
+        # check source resistance tolerance
+        r_src = np.asarray(analysis["v_r_source"])
+        if self._exceeded_r_limit(r_src):
+            raise RuntimeError("Source resistance exceed tolerance bounds.")
+
+        ## check sink resistance tolerance
+        r_sink = np.asarray(analysis["v_r_sink"])
+        if self._exceeded_r_limit(r_sink):
+            raise RuntimeError("Sink resistance exceed tolerance bounds.")
+
         return analysis, self.shared.events
+
+
+    def _exceeded_r_limit(
+        self,
+        res: np.ndarray,
+        tol: float = 0.01,
+    ):
+        """CHecks the resistance limits for power.
+
+        Args:
+            analysis: Simulation analysis
+            tol: Percent tolerance
+        """
+
+        # Allow 1% tolerance between the bonds
+        tol_min = self.r_min * (1. - tol)
+        tol_max = self.r_max * (1. + tol)
+
+        return res.min() <= tol_min or tol_max <= res.max()
 
     def run(self, end_time: float = 2.0) -> SimulationResults:
         """Run the simulation on a set of capacitor values.
