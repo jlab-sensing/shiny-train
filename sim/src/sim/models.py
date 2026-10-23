@@ -1102,7 +1102,7 @@ class SimulationResults:
         return len(self.events)
 
 
-    def event_cycles(self, start: str, end: str) -> int:
+    def event_cycles(self, start: str = "", end: str = "") -> int:
         """Number of transitions from end to start (cycles).
 
         Args:
@@ -1113,8 +1113,18 @@ class SimulationResults:
             Number of full cycles
         """
 
+        events = self.unique_events()
+
+        if not start:
+            start = events[0]
+
+        if not end:
+            end = events[-1]
+
+        print(f"start: {start}, end: {end}")
+
         sorted_events = sorted(self.events)
-        return sum(a.name != b.name for a, b in pairwise(sorted_events))
+        return sum((a.name == start) and (b.name == end) for a, b in pairwise(sorted_events))
 
     def event_failures(self) -> int:
         """Number of events that failed.
@@ -1124,7 +1134,6 @@ class SimulationResults:
         """
 
         return sum(e.failed for e in self.events)
-
 
     @staticmethod
     def load(path: str) -> "SimulationResults":
@@ -1935,7 +1944,7 @@ class SimulationPlotter:
 
         transitions = {
             "Total": [res.event_count() for res in results],
-            "Cycles": [res.event_cycles("50s", "70s") for res in results],
+            "Cycles": [res.event_cycles() for res in results],
             "Failure": [res.event_failures() for res in results],
         }
 
