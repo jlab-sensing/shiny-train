@@ -11,16 +11,15 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 DC_VOLTS = 3.2
 
-a = 0.95
-b = 0.02
-# a = 0.60
-# b = 0.30
-TRANSITION_MATRIX = {
-    'measure': np.array([0, 1, 0, 0]),
-    'analyze': np.array([a, 0, (1-a), 0]),
-    'tx': np.array([0, 0, 0, 1]),
-    'rx': np.array([(1-b), 0, b, 0])
-}
+
+def make_transition_matrix(a, b):
+    # rows: source task; columns in TASK_NAMES order (measure, analyze, tx, rx)
+    return {
+        "measure": np.array([0, 1, 0, 0]),
+        "analyze": np.array([a, 0, 1 - a, 0]),
+        "tx":      np.array([0, 0, 0, 1]),
+        "rx":      np.array([1 - b, 0, b, 0]),
+    }
 
 
 @dataclass(frozen=True)
@@ -30,123 +29,11 @@ class Task:
     name: str
 
 
-class MTRSinkSM(StateChart):
-    cap = None
-    time = None
-    task_start = 0.0
-    remaining_time = 0.0
-    load_value = 4.64e-3 * DC_VOLTS  # OUTPUT: the energy consumption for next timestep
-
-    class task(State.Compound):
-        measure = State(
-            "measure",
-            value=Task(cost=11.68e-3 * DC_VOLTS, duration=0.511, name="measure"),
-        )
-        tx = State(
-            "tx", value=Task(cost=86.52e-3 * DC_VOLTS, duration=0.285, name="tx")
-        )
-        rx = State(
-            "rx", value=Task(cost=20.03e-3 * DC_VOLTS, duration=0.927, name="rx")
-        )
-        h = HistoryState(type="deep")
-
-    sleep = State("sleep", initial=True, value=4.64e-3 * DC_VOLTS)
-
-    # Self-transitions while executing, advance when done
-    cycle = (
-        task.measure.to.itself(cond="executing")
-        | task.measure.to(task.tx)
-        | task.tx.to.itself(cond="executing")
-        | task.tx.to(task.rx)
-        | task.rx.to.itself(cond="executing")
-        | task.rx.to(task.measure)
-    )
-
-    pause = task.to(sleep)
-    wake = sleep.to(task.measure, cond="no_history") | sleep.to(task.h)
-
-    def _get_task_state_id(self):
-        for state in self.configuration:
-            if (
-                state.is_active
-                and hasattr(state, "value")
-                and isinstance(state.value, Task)
-            ):
-                id = state.id
-                child_substates = np.argwhere(self.transitions[id])
-                return id, child_substates
-        return None, None
-
-    def _get_current_state_id(self):
-        for state in self.configuration:
-            if state.is_active:
-                return state.id
-        return None
-
-    def on_enter_measure(self, target, source=None, **kwargs):
-        if source is None or source.id != "measure":
-            # print(f"{time:.6f}:    Exiting {source.id} and entering {target.id}")
-            self.task_start = self.time
-            self.load_value = target.value.cost
-
-    def on_enter_tx(self, target, source=None, **kwargs):
-        if source is None or source.id != "tx":
-            # print(f"{time:.6f}:    Exiting {source.id} and entering {target.id}")
-            self.task_start = self.time
-            self.load_value = target.value.cost
-
-    def on_enter_rx(self, target, source=None, **kwargs):
-        if source is None or source.id != "rx":
-            # print(f"{time:.6f}:    Exiting {source.id} and entering {target.id}")
-            self.task_start = self.time
-            self.load_value = target.value.cost
-
-    def on_enter_sleep(self, target, source=None):
-        if source is None or source.id != "sleep":
-            # print(f"{time:.6f}:    Exiting {source.id} and entering {target.id}")
-            self.task_start = self.time
-            self.load_value = 0.0
-
-    def executing(self, source=None, **kwargs):
-        if source and hasattr(source, "value") and isinstance(source.value, Task):
-            return (self.time - self.task_start) < source.value.duration
-        return False  # fallback default
-
-    def charged(self):
-        return self.cap.voltage >= self.cap.v_max
-
-    def recharging(self):
-        return self.cap.voltage < self.cap.v_max
-
-    def no_history(self):
-        return self.history_values == {}
-
-    def on_cycle(self, source=None, target=None, **kwargs):
-        if source and hasattr(source, "value") and isinstance(source.value, Task):
-            task = source.value
-            energy = self.cap.energy
-            min_energy = self.cap.min_energy
-            self.remaining_time = task.duration - self.time + self.task_start
-            projected_energy = energy - task.cost * self.remaining_time
-
-            if projected_energy <= min_energy:
-                self.raise_("pause")
-            else:
-                pass
-        else:
-            print(f"unexpected source.id: {source.id}")
-
-
 class MATRSinkSM(StateChart):
-    cap = None
-    time = None
-    rng = np.random.default_rng(seed=42)
-    task_start = 0.0
-    remaining_time = 0.0
     load_value = 4.64e-4 * DC_VOLTS  # OUTPUT: the energy consumption for next timestep
-    transitions = TRANSITION_MATRIX
     TASK_NAMES = ['measure', 'analyze', 'tx', 'rx']
     wake_energy = None
+
 
     class task(State.Compound):
         measure = State(
@@ -166,7 +53,6 @@ class MATRSinkSM(StateChart):
         h = HistoryState(type="deep")
 
     sleep = State("sleep", initial=True, value=Task(cost=4.64e-4 * DC_VOLTS, duration=0.01, name="sleep"))
-    # sleep = State("sleep", initial=True, value=4.64e-4 * DC_VOLTS)
     # replan = State("replan", value=4.64e-4 * DC_VOLTS)
 
     # Self-transitions while executing, advance when done
@@ -188,6 +74,27 @@ class MATRSinkSM(StateChart):
 
     # plan = task.to(replan)
     # resume = replan.to(task.measure, cond="no_history") | replan.to(task.h)
+
+    def __init__(self, cap=None, a=0.95, b=0.02, seed=None, **kwargs):
+        # Set before super().__init__(), which enters the initial state
+        self.cap = cap
+        self.time = 0.0
+        self.task_start = 0.0
+        self.remaining_time = 0.0
+        self.a = a
+        self.b = b
+        self.transitions = make_transition_matrix(a, b)
+        self.rng = np.random.default_rng(seed)
+        super().__init__(**kwargs)
+
+    def _p(self, src, dst):
+        return self.transitions[src][self.TASK_NAMES.index(dst)]
+
+    def analyze_pass(self, **kwargs):
+        return self.rng.random() < self._p("analyze", "tx")   # 1 - a
+
+    def rx_pass(self, **kwargs):
+        return self.rng.random() < self._p("rx", "measure")   # 1 - b
 
     def _get_task_state_id(self):
         for state in self.configuration:
@@ -256,18 +163,11 @@ class MATRSinkSM(StateChart):
             return (self.time - self.task_start) < source.value.duration
         return False  # fallback default
 
-    def analyze_pass(self, n=1.960, **kwargs):  # 95% chance of failure
-        return np.abs(self.rng.standard_normal()) >= n
-
-    def rx_pass(self, n=0.025, **kwargs):  # 2% chance of failure
-        return np.abs(self.rng.standard_normal()) >= n
-
     def charged(self):
         need = getattr(self, "wake_energy", None)
         if need is None:
             return self.cap.voltage >= self.cap.v_max
         return self.cap.energy - self.cap.min_energy >= need
-
 
     def recharging(self):
         return self.cap.voltage < self.cap.v_max
@@ -289,40 +189,6 @@ class MATRSinkSM(StateChart):
                 pass
         else:
             print(f"unexpected source.id: {source.id}")
-
-
-class TestSinkSM(MTRSinkSM):
-    def recharging(self):
-        new_v = ((self.cap.energy + 5e-3 * 0.05) * 2 / self.cap.farads) ** 0.5
-
-        self.cap.voltage = min(new_v, self.cap.v_max)
-        return self.cap.voltage < self.cap.v_max
-
-    def on_cycle(self, source=None, target=None, **kwargs):
-        if source and hasattr(source, "value") and isinstance(source.value, Task):
-            task = source.value
-            energy = self.cap.energy
-            min_energy = self.cap.min_energy
-            self.remaining_time = task.duration - self.time + self.task_start
-            projected_energy = energy + task.cost * self.remaining_time
-
-            if projected_energy <= min_energy:
-                self.raise_("pause")
-            else:
-                self.cap.voltage = (
-                    (energy - task.cost * 0.05) * 2 / self.cap.farads
-                ) ** 0.5
-
-
-def init_MTRSinkSM(cap, testing=False):
-    if testing:
-        sm = TestSinkSM()
-    else:
-        sm = MTRSinkSM()
-    sm.cap = cap
-    sm.task_start = 0.0
-    sm.time = 0.0
-    return sm
 
 
 def init_MATRSinkSM(cap, testing=False):
