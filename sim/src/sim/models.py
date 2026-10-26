@@ -238,7 +238,7 @@ class BaseCapacitor(SwitchedComponent, SpiceComponent):
     v_min: float = 1.65
     v_max: float = 3.2
     _leakage: float = 3e-6
-    initial_voltage: float = 0.0
+    initial_voltage: float = 1.3
     voltage: float = 0.0
 
     @property
@@ -779,7 +779,7 @@ class BonitoSource(Source):
 
             # get power from file
             power = file["data"][self.name][self.idx]
-        return power * 64
+        return power
 
 
 class Sink(SwitchedComponent):
@@ -2560,10 +2560,12 @@ class CapacitorStorageSim:
             ngspice_shared=self.shared,
         )
 
-        # Initial conditions
+        # Initial conditions. With UIC there is no DC solve, so the .ic must
+        # sit on the capacitor's own node (c{idx}_cap), behind the V_sense
+        # ammeter; an .ic on c{idx}_pos never reaches the capacitor.
         ic_kwargs = {}
         for idx, cap in enumerate(self.config.caps):
-            ic_kwargs[f"c{idx}_pos"] = cap.initial_voltage
+            ic_kwargs[f"c{idx}_cap"] = cap.initial_voltage
         self.simulator.initial_condition(**ic_kwargs)
 
         # set options
