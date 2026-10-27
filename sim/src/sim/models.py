@@ -779,7 +779,7 @@ class BonitoSource(Source):
 
             # get power from file
             power = file["data"][self.name][self.idx]
-        return power
+        return power*64
 
 
 class Sink(SwitchedComponent):
