@@ -791,9 +791,10 @@ class BonitoSource(Source):
         self.file = h5py.File(self.fullpath, "r")
 
     def post_sim(self):
-        """Close file once simulation ends."""
+            """Close file once simulation ends."""
 
-        self.file.close()
+            self.file.close()
+            del self.file
 
 
 class Sink(SwitchedComponent):
@@ -1047,6 +1048,8 @@ class SimulationResults:
             self.p_lines = 0
             self.farads: list[float] = []
             self.name = ""
+
+        self.config = config
 
         self.ts: dict = {}
         self.from_analysis(analysis)
