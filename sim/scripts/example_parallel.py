@@ -8,10 +8,10 @@ configuration based on parameters as shown here.
 """
 
 from sim.models import (
+    BonitoSource,
     Capacitor,
     CapacitorStorageSimConfig,
     ConstantSink,
-    ConstantSource,
     CVCapacitor,
     Event,
     IdealCapacitor,
@@ -55,7 +55,7 @@ class MyConfig(CapacitorStorageSimConfig):
 
 
 def create_config(caps: list[Capacitor]):
-    src = ConstantSource(0.1, dt=0.1, duration=3600.0, voltage=3.3)
+    src = BonitoSource(duration=3600.0, downsample=10000, voltage=3.3)
     sink = ConstantSink(0.00001)
     config = MyConfig(src, caps, sink, len(caps))
     return config

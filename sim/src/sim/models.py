@@ -559,6 +559,12 @@ class Source(SwitchedComponent, ABC):
 
         return
 
+    def pre_sim(self):
+        """Callback before the simulation starts."""
+
+    def post_sim(self):
+        """Callback after the simulation ends."""
+
 
 class ConstantSource(Source):
     def __init__(self, power: float, **kwargs):
@@ -764,22 +770,30 @@ class BonitoSource(Source):
             time: Simulation time.
         """
 
-        with h5py.File(self.fullpath, "r") as file:
-            # iterate until we get to the next timestamp
-            # TODO (jmadden173): Can implement some sort of binary search to make
-            # this go after
-            while file["time"][self.idx] < time:
-                self.idx += self.downsample
+        # Reuse the persistent file handle opened in pre_sim()
+        # and cache dataset references to avoid repeated lookups
+        time_ds = self.file["time"]
+        power_ds = self.file["data"][self.name]
 
-            # check that simulation and data class are synced
-            # sim_time = (self.file["time"][self.idx] - self.offset)
-            # dt = sim_time - time
-            # if abs(dt) >= self.dt:
-            #    raise RuntimeError(f"Simulation ({sim_time}) and data timestamp ({time}) is not synced.")
+        # TODO (jmadden173): Can implement some sort of binary search to make
+        # this go faster instead of a linear scan
+        while time_ds[self.idx] < time:
+            self.idx += self.downsample
 
-            # get power from file
-            power = file["data"][self.name][self.idx]
-        return power*64
+        # Get power from the dataset using the persistent handle
+        power = power_ds[self.idx]
+
+        return power
+
+    def pre_sim(self):
+        """Open file once in simulation."""
+
+        self.file = h5py.File(self.fullpath, "r")
+
+    def post_sim(self):
+        """Close file once simulation ends."""
+
+        self.file.close()
 
 
 class Sink(SwitchedComponent):
@@ -2585,11 +2599,15 @@ class CapacitorStorageSim:
             maxord=2,
         )
 
+        self.config.src.pre_sim()
+
         analysis = self.simulator.transient(
             step_time=self.config.src.dt @ u_s,
             end_time=self.config.src.duration @ u_s,
             use_initial_condition=True,
         )
+
+        self.config.src.post_sim()
 
         # check source resistance tolerance
         r_src = np.asarray(analysis["v_r_source"])

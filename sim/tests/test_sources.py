@@ -32,6 +32,8 @@ class TestSources(unittest.TestCase):
 
         src = BonitoSource(data_path, voltage=1.65, downsample=1)
 
+        src.pre_sim()
+
         self.assertAlmostEqual(src.get_voltage(), 1.65)
         self.assertAlmostEqual(src.get_power(0.0), 5.69625264568467e-06)
         src.next()
@@ -40,6 +42,9 @@ class TestSources(unittest.TestCase):
         self.assertAlmostEqual(src.get_power(2.0e-05), 7.09716456e-06)
         src.next()
         self.assertAlmostEqual(src.get_power(3.0e-05), 6.89668724e-06)
+
+        src.post_sim()
+
 
     def test_bonito_name(self):
         """Check getting different nodes power data."""
