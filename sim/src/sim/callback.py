@@ -1,23 +1,17 @@
 """
 Matrix-form assignment model, solved with SCIP.
 
-All modes share the constraint set A z <= b of Eq. (stage1-cons): each task on
+The constraint set A z <= b (the paper's Eq. (program)): each task on
 exactly one capacitor (the equality, as two inequality rows), y_ij <= x_j,
-y_ij <= f_ij, sum_j x_j <= M, and optionally the cumulative energy row.
+y_ij <= f_ij, and sum_j x_j <= M.
 
-solver (toggle per TaskAssigner / LeacSimConfig):
+Thimble solves one binary program with a convex objective:
 
-    "lp"     LEACS MILP (Eqs. 4-7):   maximize 1^T M1 z  s.t. A z <= b
-             Under the equality every feasible plan scores N, so this is a
-             feasibility solve: the plan is whichever feasible point SCIP
-             finds. LEACS ranks feasible plans by trace replay; that ranking
-             is not part of this solve.
+    minimize ||P z||^2  s.t.  A z <= b
 
-    "qp"     Thimble, one solve:      minimize ||P z||^2  s.t. A z <= b
-
-    "lp+qp"  the original lexicographic program: the LP, then the QP with
-             1^T M1 z fixed at the LP optimum. Same optimal set as "qp" under
-             the equality; kept for ablation.
+Faithful LEACS is not solved here: it is a fixed plan, chosen by simulating
+every feasible static plan and keeping the best (see harness/runner.py), and
+run through LeacSimConfig with set_plan and no replanning.
 
 qp_weighting (operator P in the QP objective):
 
@@ -37,21 +31,24 @@ import scipy.sparse as sp
 from pyscipopt import Model, quicksum
 from pyscipopt.recipes.nonlinear import set_nonlinear_objective
 
-from .leaf_distribution import leaf_distribution
 from .models import (
+    ConstantSource,
+    SineSource,
+    BonitoSource,
     Capacitor,
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
-    Event,
     LeacsCapacitor,
-    SineSource,
     SMSink,
 )
-from .state_machines import MATRSinkSM, Task, init_MTRSinkSM
+from .state_machines import Task, MATRSinkSM, init_MATRSinkSM
+from .leaf_distribution import leaf_distribution
 
-SOLVERS = ("lp", "qp", "lp+qp")
-REPLAN_TRIGGERS = ("depth", "forecast", "both")
+REPLAN_TRIGGERS = ("depth", "forecast")
 VISIT_RULES = ("one", "ceil", "max")
+CERTIFICATES = ("current", "capacity", "mixed")
+REPLAN_FALLBACKS = ("presolve", "keep")
+WAKE_RULES = ("energy", "vmax")
 QP_WEIGHTINGS = ("unweighted", "weighted")
 _OK = ("OPTIMAL", "FEASIBLE")
 
@@ -70,11 +67,8 @@ class AssignmentModel:
     A: sp.csr_matrix
     b: np.ndarray
 
-    # Primary objective (Stage 1):
-    #
-    # maximize objective @ z = 1^T M1 z
-    #
-    # This is the number of assigned tasks.
+    # objective @ z = 1^T M1 z is the number of assigned tasks; used to check
+    # that a solution assigns every task.
     objective: np.ndarray
 
     # P maps z -> per-capacitor loads for the QP objective ||P z||^2:
@@ -91,7 +85,6 @@ class AssignmentModel:
     M: int
 
     E_allowed: np.ndarray | None = None
-    energy_constraint: bool = True
     qp_weighting: str = "unweighted"
 
     @property
@@ -218,6 +211,51 @@ def visit_counts(P, start: int, depth: int, rule: str = "ceil") -> np.ndarray | 
     return out
 
 
+def trajectories(P, start: int, depth: int) -> list[tuple[int, ...]]:
+    """Every task sequence of length depth + 1 from `start` with nonzero probability."""
+    paths = [(start,)]
+    for _ in range(depth):
+        paths = [p + (j,) for p in paths for j, pij in enumerate(P[p[-1]]) if pij > 0]
+    return paths
+
+
+def board_rows(K: int, N: int, board, cover: bool):
+    """
+    Rows in z-space that freeze the hardware to `board` (x = board) and,
+    with cover=True, make every board capacitor hold at least one task
+    (x_j - sum_i y_ij <= 0).
+    """
+    board = np.asarray(board, dtype=float)
+    X = sp.hstack([sp.eye(K, format="csr"), sp.csr_matrix((K, K * N))], format="csr")
+    rows = [(X, board), (-X, -board)]
+    if cover:
+        _, _, _, _, M5 = build_operators(N, K)
+        rows.append((X - M5, np.zeros(K)))
+    return rows
+
+
+def near_term_rows(K: int, N: int, paths, costs, stored):
+    """
+    One row per (trajectory, capacitor): the energy every task on the
+    trajectory draws from capacitor j must fit what j stores now,
+
+        sum_{i in path} count_path(i) * costs[i][j] * y_ij - stored_j * x_j <= 0.
+
+    Exact per trajectory, so taking one branch never pays for the other.
+    """
+    rows, cols, vals = [], [], []
+    r = 0
+    for path in paths:
+        counts = np.bincount(path, minlength=N)
+        for j in range(K):
+            for i in np.flatnonzero(counts):
+                rows.append(r); cols.append(K + i * K + j); vals.append(counts[i] * costs[i][j])
+            rows.append(r); cols.append(j); vals.append(-stored[j])
+            r += 1
+    A = sp.csr_matrix((vals, (rows, cols)), shape=(r, K * (N + 1)))
+    return [(A, np.zeros(r))]
+
+
 def forecast_brownout(P, plan, costs, available, start: int, horizon: int, risk: float = 0.0):
     """
     Forecast capacitor overdraw along the task tree, assuming no harvest.
@@ -308,21 +346,18 @@ def build_model(
     M: int,
     caps: list[Capacitor],
     energy_costs: np.ndarray,
-    energy_constraint: bool = True,
     feasibility_costs: np.ndarray | None = None,
     qp_weighting: str = "unweighted",
+    feasibility_mask: np.ndarray | None = None,
+    extra_constraints: list | None = None,
 ) -> AssignmentModel:
     """
-    Build the sparse matrix representation of Eq. (stage1-cons).
+    Build the sparse matrix representation of the constraints, Eq. (program).
 
     energy_costs:
         d_ij of Eq. (costs), shape (N, K). Build it with
         assignment_costs(...). With visits = 1 and no switching cost this
         is E_i + l_ij, i.e. what you passed before.
-
-    energy_constraint:
-        True   include the blue per-capacitor energy row (paper default).
-        False  red feasibility row only, i.e. the LEACS-style formulation.
 
     feasibility_costs:
         Optional (N, K) costs for Eq. (f) only. None (default) uses d_ij,
@@ -333,6 +368,14 @@ def build_model(
     qp_weighting:
         "unweighted"  load operator M5 (tasks per capacitor).
         "weighted"    load operator M5 diag(d) / max(d) (energy per capacitor).
+
+    feasibility_mask:
+        Optional (N, K) boolean f_ij that replaces the mask computed from
+        energies, e.g. a mixed certificate (see TaskAssigner.assign).
+
+    extra_constraints:
+        Optional list of (A_rows, b_rows) pairs in z-space, appended to
+        A z <= b (frozen hardware, board coverage, near-term trajectories).
     """
 
     if qp_weighting not in QP_WEIGHTINGS:
@@ -361,7 +404,12 @@ def build_model(
     if f_costs.shape != (N, K):
         raise ValueError(f"feasibility_costs must have shape ({N},{K})... has {f_costs.shape}")
 
-    feasibility = f_costs <= E_allowed[np.newaxis, :]
+    if feasibility_mask is None:
+        feasibility = f_costs <= E_allowed[np.newaxis, :]
+    else:
+        feasibility = np.asarray(feasibility_mask, dtype=bool)
+        if feasibility.shape != (N, K):
+            raise ValueError(f"feasibility_mask must have shape ({N},{K})... has {feasibility.shape}")
 
     stranded = np.flatnonzero(~feasibility.any(axis=1))
     if stranded.size:
@@ -378,16 +426,14 @@ def build_model(
     f = np.concatenate([np.zeros(K), feasibility.reshape(-1)])
 
     # ------------------------------------------------------------
-    # Eq. (stage1-obj): maximize 1^T M1 z.
+    # 1^T M1 z counts assigned tasks (checked after every solve).
     # ------------------------------------------------------------
 
     ones = np.ones(K * (N + 1))
     objective = np.asarray(ones @ M1).ravel()
-    # dmat_pad = np.hstack((np.zeros(K),d_mat.flatten()))
-    # objective = np.asarray(dmat_pad @ M1).ravel()
 
     # ------------------------------------------------------------
-    # Eq. (stage1-cons), row by row.
+    # Eq. (program), row by row.
     # ------------------------------------------------------------
 
     # M4 M1 z - 1_N <= 0: each task on at most one capacitor.
@@ -414,16 +460,9 @@ def build_model(
     # blocks_A = [A_task1, A_supply_assignment, A_feasibility]
     # blocks_b = [b_task1, b_supply_assignment, b_feasibility]
 
-    # Blue: M5 diag(d) z - diag(E_allowed) [I_K 0_{K x KN}] z <= 0_K.
-    if energy_constraint:
-        X = sp.hstack(
-            [sp.eye(K, format="csr"), sp.csr_matrix((K, K * N))],
-            format="csr",
-        )
-        A_energy = (M5 @ sp.diags(d)) - (sp.diags(E_allowed) @ X)
-
-        blocks_A.append(A_energy)
-        blocks_b.append(np.zeros(K))
+    for A_extra, b_extra in extra_constraints or []:
+        blocks_A.append(sp.csr_matrix(A_extra))
+        blocks_b.append(np.asarray(b_extra, dtype=float))
 
     # 1^T M2 z - M <= 0: at most M capacitors.
     A_supply_count = sp.csr_matrix(np.asarray(ones @ M2).ravel())
@@ -460,7 +499,6 @@ def build_model(
         K=K,
         M=M,
         E_allowed=E_allowed,
-        energy_constraint=energy_constraint,
         qp_weighting=qp_weighting,
     )
 
@@ -490,107 +528,6 @@ def _scip_status(model: Model) -> str:
     )
 
 
-def _build_scip_model(
-    A: sp.csr_matrix,
-    b: np.ndarray,
-    objective: np.ndarray,
-    sense: str,
-) -> tuple[Model, list]:
-    """
-    Build a binary MILP using SCIP.
-
-    Objective:
-
-        objective @ z
-
-    Constraints:
-
-        A z <= b
-
-    Variables:
-
-        z_j in {0, 1}
-
-    Returns:
-
-        (SCIP model, SCIP variable list)
-    """
-
-    A = A.tocsr()
-
-    b = np.asarray(
-        b,
-        dtype=np.float64,
-    )
-
-    objective = np.asarray(
-        objective,
-        dtype=np.float64,
-    )
-
-    n = A.shape[1]
-    m = A.shape[0]
-
-    if b.shape != (m,):
-        raise ValueError(f"b has shape {b.shape}; expected {(m,)}")
-
-    if objective.shape != (n,):
-        raise ValueError(f"objective has shape {objective.shape}; expected {(n,)}")
-
-    # ------------------------------------------------------------
-    # SCIP model
-    # ------------------------------------------------------------
-
-    model = Model()
-
-    # Keep SCIP quiet.
-    model.hideOutput()
-
-    # ------------------------------------------------------------
-    # Binary variables
-    # ------------------------------------------------------------
-
-    z = [
-        model.addVar(
-            name=f"z_{j}",
-            vtype="B",
-        )
-        for j in range(n)
-    ]
-
-    # ------------------------------------------------------------
-    # Linear constraints:
-    #
-    #     A z <= b
-    # ------------------------------------------------------------
-
-    for i in range(m):
-        start = A.indptr[i]
-        end = A.indptr[i + 1]
-
-        expr = quicksum(float(A.data[k]) * z[A.indices[k]] for k in range(start, end))
-
-        model.addCons(
-            expr <= float(b[i]),
-            name=f"constraint_{i}",
-        )
-
-    # ------------------------------------------------------------
-    # Linear objective
-    # ------------------------------------------------------------
-
-    objective_expr = quicksum(
-        float(objective[j]) * z[j] for j in range(n) if objective[j] != 0.0
-    )
-
-    model.setObjective(
-        objective_expr,
-        sense,
-    )
-
-    return model, z
-
-
 def _solution_array(
     model: Model,
     variables: list,
@@ -618,69 +555,12 @@ def _solution_array(
 
 
 # ----------------------------------------------------------------------
-# Stage 1
+# The QP
 # ----------------------------------------------------------------------
 
 
-def solve_stage1_milp(
+def solve_qp(
     model: AssignmentModel,
-) -> dict:
-    """
-    Stage 1:
-
-        maximize objective^T z
-
-    subject to
-
-        A z <= b
-        z binary
-    """
-
-    start = time.perf_counter()
-
-    scip, z = _build_scip_model(
-        A=model.A,
-        b=model.b,
-        objective=model.objective,
-        sense="maximize",
-    )
-
-    scip.optimize()
-
-    status = _scip_status(scip)
-
-    solution = _solution_array(
-        scip,
-        z,
-    )
-
-    objective_value = float(model.objective @ solution)
-
-    # SCIP statistics.
-    nodes = scip.getNNodes()
-
-    wall_time_ms = (time.perf_counter() - start) * 1000.0
-
-    return {
-        "status": status,
-        "objective": objective_value,
-        "solution": solution,
-        "wall_time_ms": wall_time_ms,
-        # SCIP is not a simplex solver, so this does not
-        # correspond to HiGHS's simplex_iteration_count.
-        "iterations": None,
-        "nodes": nodes,
-    }
-
-
-# ----------------------------------------------------------------------
-# Stage 2
-# ----------------------------------------------------------------------
-
-
-def solve_stage2_miqp(
-    model: AssignmentModel,
-    optimal_tasks: int | None = None,
 ) -> dict:
     """
     QP:
@@ -690,8 +570,6 @@ def solve_stage2_miqp(
     subject to:
 
         A z <= b
-        objective^T z == optimal_tasks   (only when optimal_tasks is given,
-                                          i.e. solver="lp+qp")
         z binary
 
     where:
@@ -759,25 +637,6 @@ def solve_stage2_miqp(
         )
 
     # ------------------------------------------------------------
-    # Lexicographic mode only: keep the LP optimum,
-    #
-    #     objective^T z == optimal_tasks
-    #
-    # Redundant under the assignment equality (it fixes N), so the
-    # one-shot "qp" mode omits it.
-    # ------------------------------------------------------------
-
-    if optimal_tasks is not None:
-        primary_expr = quicksum(
-            float(model.objective[j]) * z[j] for j in range(n) if model.objective[j] != 0.0
-        )
-
-        scip.addCons(
-            primary_expr == float(optimal_tasks),
-            name="stage1_optimum",
-        )
-
-    # ------------------------------------------------------------
     # Load expressions
     #
     #     load_i = sum_j P[i,j] z_j
@@ -795,15 +654,6 @@ def solve_stage2_miqp(
         sense="minimize",
     )
 
-    # print(
-    #     "Stage 2:"
-    #     f" vars={n},"
-    #     f" rows={A.shape[0] + 1},"
-    #     f" load_vars={P.shape[0]},"
-    #     f" load_nnz={P.nnz},"
-    #     f" optimal_tasks={optimal_tasks}"
-    # )
-
     # ------------------------------------------------------------
     # Solve
     # ------------------------------------------------------------
@@ -811,10 +661,6 @@ def solve_stage2_miqp(
     scip.optimize()
 
     status = _scip_status(scip)
-
-    # print(
-    #     f"Stage 2 SCIP status: {status}"
-    # )
 
     solution = _solution_array(
         scip,
@@ -843,10 +689,7 @@ def solve_stage2_miqp(
 
     return {
         "status": status,
-        # Primary objective remains the number
-        # of assigned tasks.
-        "objective": primary_objective,
-        "primary_objective": primary_objective,
+        "n_assigned": primary_objective,
         "load_objective": load_objective,
         "solution": solution,
         "capacitor_loads": loads,
@@ -857,58 +700,23 @@ def solve_stage2_miqp(
     }
 
 
-# ----------------------------------------------------------------------
-# Complete lexicographic solve
-# ----------------------------------------------------------------------
-
-
 def solve_assignment(
     model: AssignmentModel,
-    solver: str = "qp",
 ) -> dict:
     """
-    Solve the assignment problem in the chosen mode (see module docstring).
-
-    Returns the solver's result dict (status, solution, wall_time_ms, ...)
-    plus "solver" and, on success, "n_assigned". A successful solve that does
-    not assign every task raises, because the equality rows should make that
-    impossible.
+    Solve the QP. Returns the solver's result dict (status, solution,
+    wall_time_ms, ...). A successful solve that does not assign every task
+    raises, because the equality rows should make that impossible.
     """
 
-    if solver not in SOLVERS:
-        raise ValueError(f"solver must be one of {SOLVERS}, got {solver!r}")
-
-    if solver == "lp":
-        result = solve_stage1_milp(model)
-
-    elif solver == "qp":
-        result = solve_stage2_miqp(model)
-        result["stage2_wall_time_ms"] = result["wall_time_ms"]
-
-    else:  # "lp+qp"
-        stage1 = solve_stage1_milp(model)
-        if stage1["status"] not in _OK:
-            stage1["solver"] = solver
-            return stage1
-
-        result = solve_stage2_miqp(model, optimal_tasks=round(stage1["objective"]))
-        if result["status"] not in _OK:
-            stage1["solver"] = solver
-            return stage1
-
-        result["stage1_objective"] = stage1["objective"]
-        result["stage1_wall_time_ms"] = stage1["wall_time_ms"]
-        result["stage2_wall_time_ms"] = result["wall_time_ms"]
-        result["wall_time_ms"] = stage1["wall_time_ms"] + result["wall_time_ms"]
-
-    result["solver"] = solver
+    result = solve_qp(model)
 
     if result["status"] in _OK:
         n_assigned = int(round(float(model.objective @ result["solution"])))
         result["n_assigned"] = n_assigned
         if n_assigned != model.N:
             raise RuntimeError(
-                f"{solver} solve assigned {n_assigned} of {model.N} tasks; "
+                f"QP assigned {n_assigned} of {model.N} tasks; "
                 "the assignment equality is not holding"
             )
 
@@ -922,15 +730,19 @@ class TaskAssigner:
         tasks,
         cap_limit,
         replan_depth,
-        energy_constraint,
-        solver="qp",
         qp_weighting="unweighted",
+        certificate="mixed",
+        freeze_board=True,
+        cover_board=True,
     ):
-        if solver not in SOLVERS:
-            raise ValueError(f"solver must be one of {SOLVERS}, got {solver!r}")
+        if certificate not in CERTIFICATES:
+            raise ValueError(f"certificate must be one of {CERTIFICATES}, got {certificate!r}")
+        self.certificate = certificate
+        self.freeze_board = freeze_board
+        self.cover_board = cover_board
+        self.board = None   # 0/1 per capacitor, set by presolve (or set_board)
         if qp_weighting not in QP_WEIGHTINGS:
             raise ValueError(f"qp_weighting must be one of {QP_WEIGHTINGS}, got {qp_weighting!r}")
-        self.solver = solver
         self.qp_weighting = qp_weighting
         self.caps = caps
         self.tasks = tasks
@@ -939,7 +751,6 @@ class TaskAssigner:
         self.M = cap_limit
         self.replan_depth = replan_depth
         self._planned_at = 0
-        self.energy_constraint = energy_constraint
         self.task_idx = {t.name: i for i, t in enumerate(tasks)}
 
     def presolve(self):
@@ -963,23 +774,51 @@ class TaskAssigner:
             M=self.M,
             caps=tmp,
             energy_costs=energy_costs,
-            energy_constraint=self.energy_constraint,
             qp_weighting=self.qp_weighting,
         )
-        result = solve_assignment(model, solver=self.solver)
+        result = solve_assignment(model)
         if result["status"] not in _OK:
             raise RuntimeError(
                 f"presolve is {result['status']}: no plan satisfies the constraints "
-                f"(M={self.M}, energy_constraint={self.energy_constraint}, "
+                f"(M={self.M}, "
                 f"caps={[c.farads for c in self.caps]})"
             )
+        self.set_board(result["solution"])
         return result
+
+    def set_board(self, z):
+        """The capacitors the plan z uses become the board: the hardware that
+        exists at run time. Taken from y, not x, so a capacitor the solver
+        selected but gave no task is not counted."""
+        y = np.asarray(z, dtype=float)[self.K:].reshape(self.N, self.K)
+        self.board = (y.max(axis=0) >= 0.5).astype(float)
 
     def assign(
         self,
         time,
         visits=None,
+        root=None,
+        P=None,
+        horizon=1,
     ):
+        """
+        Replan the task-to-capacitor map from the current charge state.
+
+        certificate:
+            "current"   every task must fit what its capacitor stores now;
+                        replans then favor charged capacitors and may put
+                        every task on one of them
+            "capacity"  every task must fit a full charge (diagnosis F6)
+            "mixed"     tasks reachable within `horizon` transitions of
+                        `root` must fit stored energy along every trajectory
+                        (no harvest assumed); later tasks must fit a full
+                        charge, since they will be recharged first. Needs
+                        root and P.
+        freeze_board: x is fixed to the presolve's capacitors, so replans
+            change only which task uses which capacitor.
+        cover_board: every board capacitor keeps at least one task. False lets
+            replans concentrate tasks on fewer board capacitors, down to one.
+        """
         # c.leakage is current -> p = IV = 0.01*C*V^2
         # c.energy = 0.5 * v**2 * c
         #   ==> p_leak = 0.01 C * V**2 = 0.02 * c.energy / 1 s
@@ -990,10 +829,30 @@ class TaskAssigner:
         # d_ij = n_i (E_i + l_ij), Eq. (costs). The per-pair mask keeps
         # one-execution costs, so f_ij = 1 still means one run fits.
         if visits is None:
-            energy_costs, feasibility_costs = one_run, None
+            energy_costs = one_run
         else:
             energy_costs = np.asarray(visits, dtype=float)[:, np.newaxis] * one_run
-            feasibility_costs = one_run
+
+        stored = np.array([max(c.energy - c.min_energy, 0.0) for c in self.caps])
+        full = np.array([c.farads * (c.v_max**2 - c.v_min**2) / 2 for c in self.caps])
+        extra = []
+
+        if self.certificate == "current":
+            mask = one_run <= stored
+        elif self.certificate == "capacity":
+            mask = one_run <= full
+        else:  # "mixed"
+            if root is None or P is None:
+                raise ValueError('certificate="mixed" needs root and P')
+            paths = trajectories(P, root, horizon)
+            near = np.zeros(self.N, dtype=bool)
+            near[[i for p in paths for i in p]] = True
+            mask = np.where(near[:, np.newaxis], one_run <= stored, one_run <= full)
+            extra += near_term_rows(self.K, self.N, paths, one_run, stored)
+
+        if self.freeze_board and self.board is not None:
+            mask = mask & (self.board[np.newaxis, :] > 0)
+            extra += board_rows(self.K, self.N, self.board, self.cover_board)
 
         model = build_model(
             N=self.N,
@@ -1001,12 +860,12 @@ class TaskAssigner:
             M=self.M,
             caps=self.caps,
             energy_costs=energy_costs,
-            energy_constraint=self.energy_constraint,
-            feasibility_costs=feasibility_costs,
             qp_weighting=self.qp_weighting,
+            feasibility_mask=mask,
+            extra_constraints=extra,
         )
 
-        return solve_assignment(model, solver=self.solver)
+        return solve_assignment(model)
 
     def should_schedule(self, config=None):
         if config is None or self.replan_depth <= 0:
@@ -1022,11 +881,10 @@ class LeacSimConfig(CapacitorStorageSimConfig):
     def __init__(
         self,
         # tasks,
-        cap_limit,
-        replan_depth,
-        energy_constraint,
+        cap_limit=2,
+        replan_depth=3,
         harvest_routing="fallback",
-        solver="qp",
+        charge_band=0.05,
         qp_weighting="unweighted",
         replan_trigger="depth",
         forecast_horizon=1,
@@ -1034,6 +892,12 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         forecast_gate=True,
         visit_rule="one",
         visit_depth=3,
+        certificate="mixed",
+        freeze_board=True,
+        cover_board=True,
+        replan_fallback="presolve",
+        wake_rule="energy",
+        wake_margin=1.1,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -1041,17 +905,25 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         self.cap_limit = cap_limit
 
         # "children": charge only the caps of the active task's possible next
-        #     tasks (previous behavior; harvest idles when none needs charge).
+        #     tasks (harvest idles when none needs charge).
         # "fallback": if no child cap needs charge, feed the active cap; if it
-        #     is full too, charge one other in-use cap (plan item 1.1, Residual A).
+        #     is full too, charge one other board cap.
+        # Two rules keep the source from flipping between lines every step,
+        # which stalls the SPICE solver:
+        # charge_band (V): while awake, a cap that reaches v_max counts as full
+        #     until it falls charge_band below v_max.
+        # The running cap is fed at most until it first fills during a task:
+        #     the load would otherwise pull it back through the band in a few
+        #     steps and the source would keep moving.
         if harvest_routing not in ("children", "fallback"):
             raise ValueError(f"unknown harvest_routing {harvest_routing!r}")
         self.harvest_routing = harvest_routing
+        self.charge_band = charge_band
+        self._full = set()          # caps inside the band after reaching v_max
+        self._fed_task = None       # task during which the running cap filled
 
-        # solver: "lp" (LEACS MILP), "qp" (Thimble, one solve) or "lp+qp"
-        # (lexicographic, for ablation). qp_weighting: "unweighted" (M5) or
-        # "weighted" (M5 diag(d)). Both apply to the presolve and to replans.
-        self.solver = solver
+        # qp_weighting: "unweighted" (M5) or "weighted" (M5 diag(d)), for the
+        # presolve and for replans.
         self.qp_weighting = qp_weighting
 
         # replan_trigger:
@@ -1061,14 +933,14 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         #               no harvest, some capacitor can be overdrawn within
         #               forecast_horizon transitions (1 = by the next task)
         #               with probability above forecast_risk (0 = "can")
-        #   "both"      either condition
         # forecast_gate: when the forecast fires, replan only if some task that
         #   can tip a capacitor over has another capacitor that holds enough
         #   stored energy for one run of it now. Otherwise no new plan can
         #   avoid the wait for charge, and the replan is skipped.
         # visit_rule: n_i for replans over visit_depth transitions from the
         #   active task: "one" (previous behavior), "ceil" (ceil of expected
-        #   visits) or "max" (worst case over reachable trajectories).
+        #   visits) or "max" (worst case over reachable trajectories). The
+        #   counts scale d_ij, so they act through the weighted objective.
         if replan_trigger not in REPLAN_TRIGGERS:
             raise ValueError(f"replan_trigger must be one of {REPLAN_TRIGGERS}, got {replan_trigger!r}")
         if visit_rule not in VISIT_RULES:
@@ -1079,6 +951,23 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         self.forecast_gate = bool(forecast_gate)
         self.visit_rule = visit_rule
         self.visit_depth = visit_depth
+        # Replans (see TaskAssigner.assign): certificate "current", "capacity"
+        #   or "mixed" (tasks within forecast_horizon against stored energy,
+        #   later ones against a full charge); freeze_board keeps the presolve's
+        #   capacitors as the hardware; cover_board keeps a task on each of
+        #   them. replan_fallback: on a stranded or infeasible replan, go back
+        #   to the presolve plan ("presolve") or keep the current one ("keep").
+        # wake_rule: "energy" wakes once the charging capacitor holds
+        #   wake_margin x the resumed task's energy; "vmax" waits for v_max,
+        #   as LEACS assumes.
+        if replan_fallback not in REPLAN_FALLBACKS:
+            raise ValueError(f"replan_fallback must be one of {REPLAN_FALLBACKS}, got {replan_fallback!r}")
+        if wake_rule not in WAKE_RULES:
+            raise ValueError(f"wake_rule must be one of {WAKE_RULES}, got {wake_rule!r}")
+        self.replan_fallback = replan_fallback
+        self.wake_rule = wake_rule
+        self.wake_margin = wake_margin
+        self.replan_fallbacks = 0
         self._forecast_key = None
         self.forecast_checks = 0
         self.forecast_triggers = 0
@@ -1094,13 +983,15 @@ class LeacSimConfig(CapacitorStorageSimConfig):
             tasks,
             cap_limit,
             replan_depth,
-            energy_constraint,
-            solver=solver,
             qp_weighting=qp_weighting,
+            certificate=certificate,
+            freeze_board=freeze_board,
+            cover_board=cover_board,
         )
 
         result = self.assigner.presolve()
         self.assignment = result["solution"]
+        self.presolve_assignment = np.array(result["solution"], dtype=float)
 
         # set initial sm params
         pairs = self._decode_assignment_result(self.assignment)
@@ -1112,19 +1003,14 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         self.last_substate = None
         self.depth = 0
         self.full_lap = 0
-        
-        # get the last substate for all states
-        # gets updated at every timestep
-        self.last_substate_all = None
 
-    def callback(self, time: float):
+    def callback(self, time):
         active, children = self.sm._get_task_state_id()
-        event = None
-
-        active_substate, child_substates = self.sm._get_task_state_id()
 
         if self.sm.time == 0.0:
             self.sink.connect(1)
+            self.sink.disconnect(0)
+            self.src.disconnect(1)
         self.sm.time = time
 
         pairs = self._decode_assignment_result(self.assignment)
@@ -1146,7 +1032,18 @@ class LeacSimConfig(CapacitorStorageSimConfig):
             charging = [j]
             self.sm.cap = self.caps[j]                       # wake test == charging cap
             task = self.assigner.tasks[resume]
-            self.sm.wake_energy = 1.1 * (task.cost + self.caps[j].leakage * self.caps[j].voltage) * task.duration
+            if self.wake_rule == "energy":
+                # Capped at a full charge: with the margin, a tightly sized
+                # capacitor could otherwise never wake (2.2 mF holds 8.27 mJ;
+                # 1.1 x Transmit needs 8.69 mJ).
+                cap = self.caps[j]
+                full = 0.5 * cap.farads * (cap.v_max**2 - cap.v_min**2)
+                self.sm.wake_energy = min(
+                    self.wake_margin * (task.cost + cap.leakage * cap.voltage) * task.duration,
+                    full,
+                )
+            else:
+                self.sm.wake_energy = None   # MATRSinkSM.charged: V >= v_max
         elif active is not None:
             assigned = cap_of[self.assigner.task_idx[active]]
             charging = [cap_of[t] for t in np.ravel(children) if cap_of[t] != assigned]
@@ -1157,7 +1054,7 @@ class LeacSimConfig(CapacitorStorageSimConfig):
             if self.last_substate == 'rx' and active == 'measure':
                 self.full_lap += 1
 
-        charging, feed_active = self._route_harvest(assigned, charging, cap_of)
+        charging, feed_active = self._route_harvest(assigned, charging, cap_of, active)
 
         for i, cap in enumerate(self.caps):
             if i == assigned:
@@ -1176,43 +1073,45 @@ class LeacSimConfig(CapacitorStorageSimConfig):
             self.src.disconnect(1); self.src.connect(0)
 
         if self._should_replan(active, cap_of):
+            root = active if active not in (None, "sleep") else (self.last_substate or "measure")
             try:
-                result = self.assigner.assign(time, visits=self._visits(active))
+                result = self.assigner.assign(
+                    time,
+                    visits=self._visits(active),
+                    root=self.assigner.task_idx[root],
+                    P=self._transition_rows(),
+                    horizon=self.forecast_horizon,
+                )
             except ValueError:
                 result = None
             if result is not None and result["status"] in ("OPTIMAL", "FEASIBLE"):
                 self.assignment = result["solution"]
+            elif self.replan_fallback == "presolve":
+                self.assignment = self.presolve_assignment.copy()
+                self.replan_fallbacks += 1
 
         if active != "sleep":
             self.last_substate = active
-
-        # check if state is different from lsat timestep
-        if active_substate != self.last_substate_all:
-            # store event
-            if active_substate == "sleep":
-                event = Event(active_substate, time, ignore=True)
-            else:
-                event = Event(active_substate, time)
-            # update last event
-            self.last_substate_all = active_substate
-
-
-        # run the state machine
         self._update_sink()
 
-        return event
+    def set_plan(self, z):
+        """Replace the starting plan (e.g. an injected static plan). The plan
+        also becomes the board and the replan fallback."""
+        self.assignment = np.array(z, dtype=float)
+        self.presolve_assignment = np.array(z, dtype=float)
+        self.assigner.set_board(z)
 
     def _transition_rows(self):
         """Transition matrix rows in task order, from the state machine."""
         return [np.asarray(self.sm.transitions[t.name], dtype=float) for t in self.assigner.tasks]
 
     def _should_replan(self, active, cap_of):
-        """Depth trigger, forecast trigger, or both (see replan_trigger)."""
+        """Depth trigger or forecast trigger (see replan_trigger)."""
         fire = False
-        if self.replan_trigger in ("depth", "both"):
+        if self.replan_trigger == "depth":
             fire = self.assigner.should_schedule(self)
 
-        if self.replan_trigger in ("forecast", "both") and active not in (None, "sleep"):
+        if self.replan_trigger == "forecast" and active not in (None, "sleep"):
             # Once per task start (including a restart after a pause), so the
             # check is edge-triggered like should_schedule. Checking at the
             # start rather than the last step gives the same answer under the
@@ -1238,22 +1137,31 @@ class LeacSimConfig(CapacitorStorageSimConfig):
                 self.last_forecast = depth
                 if depth is not None:
                     self.forecast_triggers += 1
-                    if not self.forecast_gate or self._replan_can_help(risky, plan, costs, available):
+                    board = self._board(cap_of)
+                    if not self.forecast_gate or self._replan_can_help(risky, plan, costs, available, board):
                         fire = True
                     else:
                         self.forecast_gated += 1
         return fire
 
     @staticmethod
-    def _replan_can_help(risky, plan, costs, available):
-        """True if some task that can tip a capacitor over has another
+    def _replan_can_help(risky, plan, costs, available, board):
+        """True if some task that can tip a capacitor over has another board
         capacitor holding enough stored energy for one run of it now."""
         return any(
             available[k] >= costs[i][k]
             for i in risky
-            for k in range(len(available))
+            for k in board
             if k != plan[i]
         )
+
+    def _board(self, cap_of):
+        """Board capacitors: the presolve's (or injected plan's) hardware.
+        Falls back to the caps the current plan uses if no board is set."""
+        board = getattr(self.assigner, "board", None)
+        if board is None:
+            return sorted(set(cap_of.values()))
+        return [int(j) for j in np.flatnonzero(board)]
 
     def _visits(self, active):
         """n_i from the active task over visit_depth transitions, or None."""
@@ -1263,23 +1171,31 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         return visit_counts(self._transition_rows(), self.assigner.task_idx[root],
                             self.visit_depth, self.visit_rule)
 
-    def _route_harvest(self, assigned, charging, cap_of):
-        """Decide where harvested energy goes this step (plan item 1.1, Residual A).
+    def _route_harvest(self, assigned, charging, cap_of, active=None):
+        """Decide where harvested energy goes this step.
 
         Returns (charging, feed_active): the caps to put on the charge line
         (line 0), and whether the source should move to the sink line (line 1)
         to feed the active cap instead.
 
-        A cap needs charge while it is below v_max. In priority order:
+        A cap needs charge while it is below v_max (with the charge_band
+        hysteresis while awake). In priority order:
           1. children of the active task (or, asleep, the task to resume);
-          2. the active cap, by connecting the source to the sink line;
-          3. one other cap that holds tasks in the current plan, the one with
-             the lowest voltage relative to v_max.
-        With harvest_routing="children" only tier 1 applies, which is the
-        previous behavior except that full caps are no longer charged.
+          2. the active cap, by connecting the source to the sink line, until
+             it first fills during the current task;
+          3. one other board capacitor (whether or not the current plan
+             gives it a task), the one with the lowest voltage relative to v_max.
+        With harvest_routing="children" only tier 1 applies.
         """
+        band = self.charge_band if assigned is not None else 0.0
+
         def needs_charge(j):
-            return self.caps[j].voltage < self.caps[j].v_max
+            v, v_max = self.caps[j].voltage, self.caps[j].v_max
+            if v >= v_max:
+                self._full.add(j)
+            elif v < v_max - band:
+                self._full.discard(j)
+            return j not in self._full
 
         # Tier 1. dict.fromkeys drops duplicates when two children share a cap.
         tier1 = [j for j in dict.fromkeys(charging) if needs_charge(j)]
@@ -1288,15 +1204,16 @@ class LeacSimConfig(CapacitorStorageSimConfig):
 
         # Tier 2: the active cap. Planner certificates assume no harvest, so
         # feeding the running task only adds margin.
-        if assigned is not None and needs_charge(assigned):
-            return [], True
+        if assigned is not None and self._fed_task != (active, self.sm.task_start):
+            if self.caps[assigned].voltage < self.caps[assigned].v_max:
+                return [], True
+            self._fed_task = (active, self.sm.task_start)    # filled: stop for this task
 
-        # Tier 3: bank energy in another cap the plan uses, rather than lose it.
-        others = [j for j in set(cap_of.values()) if j != assigned and needs_charge(j)]
+        # Tier 3: bank energy in another board cap, whether or not the current
+        # plan gives it a task, so no board capacitor is left to drain.
+        others = [j for j in self._board(cap_of) if j != assigned and needs_charge(j)]
         if others:
-            j = min(others, key=lambda k: self.caps[k].voltage / self.caps[k].v_max)
-            return [j], False
-
+            return [min(others, key=lambda k: self.caps[k].voltage / self.caps[k].v_max)], False
         return [], False
 
     def _decode_assignment_result(
@@ -1357,15 +1274,6 @@ class LeacSimConfig(CapacitorStorageSimConfig):
                 if task_idx == self.assigner.task_idx[active_substate]:
                     if self.caps[cap_idx].voltage > self.caps[cap_idx].v_min:
                         self.sm.cap = self.caps[cap_idx]
-
-                        # print(
-                        #     f"{self.sm.time:.6f}: "
-                        #     f"{active_substate}, "
-                        #     f"Cap{cap_idx} "
-                        #     f"Volts:"
-                        #     f"{self.sm.cap.voltage:.6f}"
-                        # )
-
                     break
 
         elif self.sm.sleep.is_active:
@@ -1383,7 +1291,6 @@ class LeacSimConfig(CapacitorStorageSimConfig):
 if __name__ == "__main__":
     M = 2
     replan_depth = 3
-    energy_constraint = True
 
     CONST_VOLTAGE = 3.2
 
@@ -1392,12 +1299,6 @@ if __name__ == "__main__":
         6e-4,
         6e-3,
     ]
-
-    # src = ConstantSource(
-    #     1,
-    #     duration=2,
-    #     dt=0.01,
-    # )
 
     src = SineSource(
         1.70e-2,
@@ -1408,24 +1309,20 @@ if __name__ == "__main__":
         dt=0.01,
     )
 
-    # src = BonitoSource(duration=3600, downsample=30000)
-
     caps = [
         LeacsCapacitor(
             c,
-            v_min=1.65,
+            v_min=1.7,
             v_max=3.2,
         )
         for c in cap_values
     ]
 
-    sink = SMSink(init_MTRSinkSM(caps[0]))
+    sink = SMSink(init_MATRSinkSM(caps[0]))
 
     config = LeacSimConfig(
-        M,
-        0,
-        replan_depth,
-        energy_constraint,
+        cap_limit=M,
+        replan_depth=replan_depth,
         src=src,
         caps=caps,
         sink=sink,
