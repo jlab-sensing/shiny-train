@@ -40,9 +40,16 @@ TRAIN_NODE, TEST_NODES = "node0", ["node1", "node2", "node3"]
 # TRAIN_NODE, TEST_NODES = "node2", ["node0", "node1", "node3"]
 TRAIN_SEEDS, TEST_SEEDS = [100, 101], [1, 2, 3]
 TRAIN_DURATION, TEST_DURATION = 1200, 3600            # simulated seconds
+
+
+filepath = os.path.dirname(__file__)
+OUT =  os.path.join(filepath, '..', 'data', 'submission', 'leacs_energy_node0', '')
+os.makedirs(OUT, exist_ok=True)
+
+# Old filepaths for reference
 # OUT = "/home/mwmaster/catch/thimble_sims/leacs_baseline_node0"
 # OUT = "/home/mwmaster/catch/thimble_sims/leacs_baseline_node2"
-OUT = "/home/mwmaster/catch/thimble_sims/leacs_energy_node0"
+#OUT = "/home/mwmaster/catch/thimble_sims/leacs_energy_node0"
 # OUT = "/home/mwmaster/catch/thimble_sims/leacs_energy_node2"
 
 
@@ -146,12 +153,12 @@ def main():
     print(f"LEACS plan: {best}")
 
     configs = [make_config(best, node, seed, TEST_DURATION) for node in TEST_NODES for seed in TEST_SEEDS]
-    runner = SimulationRunner(configs)
+    runner = SimulationRunner(configs, results_dir=OUT)
     results = runner.run(progress_bar=True)
     for cfg, tph in zip(configs, tasks_per_hour(results, TEST_DURATION)):
         print(f"  {cfg.name}: {tph:.1f} tasks/h")
     print(f"mean: {np.mean(tasks_per_hour(results, TEST_DURATION)):.1f} tasks/h; runtime {time.time() - start:.0f} s")
-    runner.save(OUT)
+    runner.save()
     runner.plot()
     runner.show()
 

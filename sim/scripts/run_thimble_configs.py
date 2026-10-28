@@ -2,6 +2,7 @@
 
 """Run LEACS simulation."""
 
+import os
 import time
 
 from sim.callback import LeacSimConfig
@@ -15,6 +16,10 @@ from sim.models import (
     simulation_config_matrix,
 )
 from sim.state_machines import MATRSinkSM
+
+filepath = os.path.dirname(__file__)
+results_dir = os.path.join(filepath, '..', 'data', 'submission', 'thimble', '')
+os.makedirs(results_dir, exist_ok=True)
 
 if __name__ == "__main__":
     A = 0.5     # P(analyze -> measure)
@@ -73,10 +78,9 @@ if __name__ == "__main__":
         names=[f"weighted_replan_depth_vmax/src{i}" for i in range(4)],
     )
 
-    runner = SimulationRunner(configs)
+    runner = SimulationRunner(configs, results_dir=results_dir)
     start = time.time()
     results = runner.run(progress_bar=True)
     print(f"runtime: {time.time() - start}")
-    runner.save('/home/mwmaster/catch/thimble_sims')
     runner.plot()
     runner.show()
