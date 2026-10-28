@@ -3165,7 +3165,6 @@ class SimulationRunner:
 
 
         path = os.path.join(self.results_dir, f"{result.config.startup_hash}.pkl")
-        print(f"saving to '{path}")
         result.save(path)
 
     @staticmethod
