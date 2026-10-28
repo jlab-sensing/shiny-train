@@ -3046,7 +3046,7 @@ class SimulationRunner:
         self,
         end_time: float = 2.0,
         progress_bar: bool = True,
-        bars_limit: int = 10,
+        bars_limit: int = 0,
     ) -> list[SimulationResults]:
         """Runs simulations concurrently.
 
