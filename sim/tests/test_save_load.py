@@ -102,8 +102,6 @@ class TestSaveLoad(unittest.TestCase):
             with redirect_stderr(io.StringIO()):
                 runner.run()
 
-            runner.save()
-
             results = SimulationRunner.load(tmp_dir)
 
             plotter = SimulationPlotter()
@@ -122,7 +120,6 @@ class TestSaveLoad(unittest.TestCase):
             runner = SimulationRunner(configs, results_dir=tmp_dir)
             with redirect_stderr(io.StringIO()):
                 runner.run()
-            runner.save()
 
             # run annother runner to check execution path
             runner2 = SimulationRunner(configs2, results_dir=tmp_dir)
@@ -142,8 +139,6 @@ class TestSaveLoad(unittest.TestCase):
 
             with redirect_stderr(io.StringIO()):
                 runner.run()
-
-            runner.save()
 
             runner2 = SimulationRunner(configs2, results_dir=tmp_dir)
 
@@ -183,8 +178,6 @@ class TestSaveLoad(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             runner = SimulationRunner([config], results_dir=tmp_dir)
             runner.run(progress_bar=False)
-
-            runner.save()
 
 
 if __name__ == "__main__":

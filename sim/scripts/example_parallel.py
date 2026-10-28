@@ -83,5 +83,6 @@ if __name__ == "__main__":
 
     runner = SimulationRunner(configs)
     results = runner.run()
+    print(f"Results saved to '{runner.results_dir}'")
     runner.plot()
     runner.show()

@@ -112,6 +112,9 @@ class MATRSinkSM(StateChart):
             "rx",
             "sleep",
             "h",
+
+            # history stores states which is weak refs
+            "history_values",
         ]
         for key in engine_keys:
             state.pop(key, None)

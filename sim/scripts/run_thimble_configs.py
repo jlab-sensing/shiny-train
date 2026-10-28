@@ -18,7 +18,6 @@ from sim.state_machines import MATRSinkSM
 
 filepath = os.path.dirname(__file__)
 results_dir = os.path.join(filepath, "..", "data", "submission", "thimble", "")
-os.makedirs(results_dir, exist_ok=True)
 
 if __name__ == "__main__":
     A = 0.5  # P(analyze -> measure)
