@@ -17,6 +17,9 @@ from sim.models import (
 from sim.state_machines import MATRSinkSM
 
 if __name__ == "__main__":
+    A = 0.5     # P(analyze -> measure)
+    B = 0.5     # P(rx -> tx)
+
     # E6 catalog, millifarad decade: 1.0, 1.5, 2.2, 3.3, 4.7, 6.8 mF
     caps = capacitor_list(1e-3, 6.8e-3, decade="E6")
 
@@ -31,7 +34,7 @@ if __name__ == "__main__":
             {"duration": 3600, "downsample": 10000, "name": "node3"},
         ],
         [SMSink],
-        {"sink": MATRSinkSM()},
+        {"sink": MATRSinkSM(a=A, b=B, seed=1)},
         [LeacSimConfig],
         {
             # --- circuit (CapacitorStorageSimConfig); src, caps, sink and name come from this matrix
@@ -51,16 +54,16 @@ if __name__ == "__main__":
             "forecast_gate": True,          # skip a replan no other board capacitor could help with
 
             # --- what a replan solves
-            "visit_rule": "one",            # visit counts n_i: "one" | "ceil" (expected, rounded up) | "max" (worst case)
-            "visit_depth": 3,               # D: transitions the visit counts cover (weighted objective only)
+            "visit_rule": "ceil",            # visit counts n_i: "one" | "ceil" (expected, rounded up) | "max" (worst case)
+            "visit_depth": 2,               # D: transitions the visit counts cover (weighted objective only)
             "certificate": "mixed",         # "mixed" (near tasks vs stored energy, later vs full charge)
                                             #   | "current" (all vs stored) | "capacity" (all vs full charge)
             "freeze_board": True,           # replans keep the design-time board
-            "cover_board": True,            # every board capacitor keeps at least one task
+            "cover_board": False,            # every board capacitor keeps at least one task
             "replan_fallback": "presolve",  # infeasible replan: "presolve" (revert to design-time map) | "keep"
 
             # --- runtime
-            "wake_rule": "vmax",            # "vmax" (wake at V_max) | "energy" (wake_margin x one run, capped at full)
+            "wake_rule": "energy",            # "vmax" (wake at V_max) | "energy" (wake_margin x one run, capped at full)
             "wake_margin": 1.1,             # energy wake target, in runs of the resumed task
             "harvest_routing": "fallback",  # "children" (next tasks' caps, else idle)
                                             #   | "fallback" (then the running cap, then another board cap)
@@ -74,6 +77,6 @@ if __name__ == "__main__":
     start = time.time()
     results = runner.run(progress_bar=True)
     print(f"runtime: {time.time() - start}")
-    runner.save('/home/mwmaster/catch')
+    runner.save('/home/mwmaster/catch/thimble_sims')
     runner.plot()
     runner.show()

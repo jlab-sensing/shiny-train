@@ -33,12 +33,17 @@ from sim.state_machines import MATRSinkSM
 CATALOG = capacitor_list(1e-3, 6.8e-3, decade="E6")   # 1.0, 1.5, 2.2, 3.3, 4.7, 6.8 mF
 CAP_LIMIT = 2                                         # LEACS's M
 A, B = 0.5, 0.5                                       # P(analyze -> measure), P(rx -> tx)
-RUNTIME = dict(wake_rule="vmax", harvest_routing="fallback")   # vmax is LEACS's own rule
+# RUNTIME = dict(wake_rule="vmax", harvest_routing="fallback")   # vmax is LEACS's own rule
+RUNTIME = dict(wake_rule="energy", harvest_routing="fallback")   # vmax is LEACS's own rule
 SOURCE = dict(downsample=10000)                       # add filename=... for another Bonito source
 TRAIN_NODE, TEST_NODES = "node0", ["node1", "node2", "node3"]
+# TRAIN_NODE, TEST_NODES = "node2", ["node0", "node1", "node3"]
 TRAIN_SEEDS, TEST_SEEDS = [100, 101], [1, 2, 3]
 TRAIN_DURATION, TEST_DURATION = 1200, 3600            # simulated seconds
-OUT = "/home/mwmaster/catch/leacs_baseline"
+# OUT = "/home/mwmaster/catch/thimble_sims/leacs_baseline_node0"
+# OUT = "/home/mwmaster/catch/thimble_sims/leacs_baseline_node2"
+OUT = "/home/mwmaster/catch/thimble_sims/leacs_energy_node0"
+# OUT = "/home/mwmaster/catch/thimble_sims/leacs_energy_node2"
 
 
 class LeacsPlanConfig(LeacSimConfig):
@@ -118,7 +123,7 @@ def rank_plans():
     for k in range(0, len(jobs), batch):
         chunk = jobs[k:k + batch]
         results = SimulationRunner([make_config(p, TRAIN_NODE, s, TRAIN_DURATION) for p, s in chunk]).run(
-            progress_bar=False)
+            progress_bar=True)
         for (p, _), tph in zip(chunk, tasks_per_hour(results, TRAIN_DURATION)):
             scores.setdefault(p, []).append(tph)
         print(f"  {min(k + batch, len(jobs))}/{len(jobs)}")
