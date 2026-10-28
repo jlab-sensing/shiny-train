@@ -143,8 +143,9 @@ def rank_plans():
     for k in range(0, len(jobs), batch):
         chunk = jobs[k : k + batch]
         results = SimulationRunner(
-            [make_config(p, TRAIN_NODE, s, TRAIN_DURATION) for p, s in chunk]
-        ).run(progress_bar=True)
+            [make_config(p, TRAIN_NODE, s, TRAIN_DURATION) for p, s in chunk],
+            results_dir=OUT,
+        ).run(progress_bar=True, bars_limit=0)
         for (p, _), tph in zip(chunk, tasks_per_hour(results, TRAIN_DURATION)):
             scores.setdefault(p, []).append(tph)
         print(f"  {min(k + batch, len(jobs))}/{len(jobs)}")
@@ -178,7 +179,7 @@ def main():
         for seed in TEST_SEEDS
     ]
     runner = SimulationRunner(configs, results_dir=OUT)
-    results = runner.run(progress_bar=True)
+    results = runner.run(progress_bar=True, bars_limit=0)
     for cfg, tph in zip(configs, tasks_per_hour(results, TEST_DURATION)):
         print(f"  {cfg.name}: {tph:.1f} tasks/h")
     print(

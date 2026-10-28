@@ -18,6 +18,8 @@ from itertools import pairwise
 from multiprocessing import Manager, Pool
 from queue import Queue
 import warnings
+import weakref
+from typing import Any
 
 import h5py
 import matplotlib.pyplot as plt
@@ -1172,7 +1174,76 @@ class SimulationResults:
             os.makedirs(directory, exist_ok=True)
 
         with open(path, "wb") as f:
-            pickle.dump(self, f)
+            try:
+                pickle.dump(self, f)
+            except TypeError:
+                unpicklable = self._find_unpicklable_weakrefs(self)
+                for path, ref in unpicklable:
+                    raise TypeError(f"Weakref found at: {path} -> points to: {ref()}")
+
+    @staticmethod
+    def _find_unpicklable_weakrefs(obj: Any, max_depth: int=20) -> list[tuple]:
+        """Recursively search an object tree to locate weak reference instances preventing pickling.
+
+        Traverses object attributes, dictionaries, sequences, and slots up to a maximum
+        recursion depth while handling cyclic references.
+
+        Args:
+            obj: The root object to inspect.
+            max_depth: Maximum recursion depth to prevent infinite loops on deeply nested structures.
+
+        Returns:
+            A list of tuples, each containing the dot/index path string to the weak reference
+            and the weak reference instance itself.
+        """
+
+        visited = set()
+        found = []
+
+        def _traverse(current, path, depth):
+            if depth > max_depth:
+                return
+
+            obj_id = id(current)
+            if obj_id in visited:
+                return
+            visited.add(obj_id)
+
+            # Check if the current object itself is a weakref
+            if isinstance(
+                current, (weakref.ReferenceType, weakref.ProxyType, weakref.CallableProxyType)
+            ):
+                found.append((path, current))
+                return
+
+            # Traverse dicts
+            if isinstance(current, dict):
+                for k, v in current.items():
+                    _traverse(k, f"{path}.keys()[{k!r}]", depth + 1)
+                    _traverse(v, f"{path}[{k!r}]", depth + 1)
+
+            # Traverse lists, tuples, sets
+            elif isinstance(current, (list, tuple, set, frozenset)):
+                for idx, item in enumerate(current):
+                    _traverse(item, f"{path}[{idx}]", depth + 1)
+
+            # Traverse arbitrary objects via attributes
+            elif hasattr(current, "__dict__"):
+                for attr, val in current.__dict__.items():
+                    _traverse(val, f"{path}.{attr}", depth + 1)
+
+            # Traverse slots if defined
+            if hasattr(type(current), "__slots__"):
+                slots = type(current).__slots__
+                if isinstance(slots, str):
+                    slots = [slots]
+                for slot in slots:
+                    if hasattr(current, slot):
+                        _traverse(getattr(current, slot), f"{path}.{slot}", depth + 1)
+
+        _traverse(obj, "root", 0)
+        return found
+
 
     def unique_events(self) -> list[str]:
         """Get the names of unique events.
@@ -3092,7 +3163,9 @@ class SimulationRunner:
             result: Result from simulation.
         """
 
+
         path = os.path.join(self.results_dir, f"{result.config.startup_hash}.pkl")
+        print(f"saving to '{path}")
         result.save(path)
 
     @staticmethod
