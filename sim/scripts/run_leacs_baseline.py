@@ -46,7 +46,6 @@ TRAIN_DURATION, TEST_DURATION = 1200, 3600  # simulated seconds
 
 filepath = os.path.dirname(__file__)
 OUT = os.path.join(filepath, "..", "data", "submission", "leacs_energy_node0", "")
-os.makedirs(OUT, exist_ok=True)
 
 # Old filepaths for reference
 # OUT = "/home/mwmaster/catch/thimble_sims/leacs_baseline_node0"
@@ -185,7 +184,6 @@ def main():
     print(
         f"mean: {np.mean(tasks_per_hour(results, TEST_DURATION)):.1f} tasks/h; runtime {time.time() - start:.0f} s"
     )
-    runner.save()
     runner.plot()
     runner.show()
 

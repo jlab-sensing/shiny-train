@@ -17,11 +17,9 @@ from dataclasses import dataclass
 from itertools import pairwise
 from multiprocessing import Manager, Pool
 from queue import Queue
+import warnings
 
 import h5py
-
-# import matplotlib
-# matplotlib.use('QtAgg')
 import matplotlib.pyplot as plt
 import numpy as np
 import PySpice
@@ -1217,8 +1215,6 @@ class SimulationResults:
 
         if not end:
             end = events[-1]
-
-        print(f"start: {start}, end: {end}")
 
         sorted_events = sorted(self.events)
         return sum(
@@ -2979,64 +2975,93 @@ class SimulationRunner:
         self,
         end_time: float = 2.0,
         progress_bar: bool = True,
+        bars_limit: int = 10,
     ) -> list[SimulationResults]:
         """Runs simulations concurrently.
 
         Args:
             end_time: Duration of simulation
             progress_bar: Show progress bar
+            bars_limit: Maximum number of configs allowed before switching
+                to a single aggregated progress bar.
 
         Returns:
             Dictionary containing the results.
         """
-
         with Manager() as m:
             q = m.Queue()
+            single_bar = len(self.configs) > bars_limit
 
             if progress_bar:
-                # create bars
-                bars = []
-                for idx, cfg in enumerate(self.configs):
-                    bars.append(
+                if single_bar:
+                    # Single aggregated bar: total progress across all configs
+                    total_duration = sum(cfg.src.duration for cfg in self.configs)
+                    bar = tqdm(
+                        total=total_duration,
+                        desc="Simulations Progress",
+                        leave=False,
+                        bar_format="{desc}: {percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
+                    )
+                    # Track latest reported sim_time per configuration
+                    current_times = [0.0] * len(self.configs)
+
+                    def listener():
+                        while True:
+                            msg = q.get()
+                            if msg is None:
+                                break
+                            idx, sim_time = msg
+                            clamped_time = min(sim_time, self.configs[idx].src.duration)
+                            current_times[idx] = clamped_time
+                            bar.n = sum(current_times)
+                            bar.refresh()
+
+                else:
+                    # Multi-bar mode: one progress bar per config
+                    bars = [
                         tqdm(
                             total=cfg.src.duration,
                             desc=cfg.name,
                             position=idx,
+                            leave=False,
                             bar_format="{desc}: {percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
                         )
-                    )
+                        for idx, cfg in enumerate(self.configs)
+                    ]
 
-                # function to update bars from queue
-                def listener():
-                    while True:
-                        msg = q.get()
-                        # handle sentinel indicating end of process
-                        if msg is None:
-                            break
-                        idx, sim_time = msg
-                        bars[idx].n = min(sim_time, bars[idx].total)
-                        bars[idx].refresh()
+                    def listener():
+                        while True:
+                            msg = q.get()
+                            if msg is None:
+                                break
+                            idx, sim_time = msg
+                            bars[idx].n = min(sim_time, bars[idx].total)
+                            bars[idx].refresh()
 
                 t = threading.Thread(target=listener, daemon=True)
                 t.start()
 
             try:
                 with Pool(self.nproc) as p:
-                    params = []
-                    for idx, cfg in enumerate(self.configs):
-                        params.append((idx, cfg, q))
+                    params = [
+                        (idx, cfg, q) for idx, cfg in enumerate(self.configs)
+                    ]
                     results = p.starmap(self._run_sim, params)
             finally:
                 if progress_bar:
                     q.put(None)
                     t.join()
-                    for b in bars:
-                        b.n = b.total
-                        b.refresh()
-                        b.close()
+                    if single_bar:
+                        bar.n = bar.total
+                        bar.refresh()
+                        bar.close()
+                    else:
+                        for b in bars:
+                            b.n = b.total
+                            b.refresh()
+                            b.close()
 
         self.results = results
-
         return results
 
     def save(self):
@@ -3046,14 +3071,25 @@ class SimulationRunner:
             directory: Directory containing pickles
         """
 
+        warnings.warn("Runner save is done automatically", DeprecationWarning)
+
         # check results exist
         if not self.results:
             raise RuntimeError("No results to save.")
 
         # save to directory
         for res in self.results:
-            path = os.path.join(self.results_dir, f"{res.config.startup_hash}.pkl")
-            res.save(path)
+            self._save_single(res)
+
+    def _save_single(self, result: SimulationResults):
+        """Saves a single simulation result with hashed name.
+
+        Args:
+            result: Result from simulation.
+        """
+
+        path = os.path.join(self.results_dir, f"{result.config.startup_hash}.pkl")
+        result.save(path)
 
     @staticmethod
     def load(directory: str) -> list[SimulationResults]:
@@ -3124,6 +3160,8 @@ class SimulationRunner:
 
         sim = CapacitorStorageSim(config, progress=progress)
         result = sim.run()
+
+        self._save_single(result)
 
         return result
 
