@@ -43,6 +43,14 @@ import logging
 
 logging.getLogger("PySpice.Spice.NgSpice.Shared.NgSpiceShared").setLevel(logging.ERROR)
 
+# Read env vars to set binary variables
+if "SPICE_COMMAND" in os.environ:
+    from PySpice.Spice.NgSpice.Server import SpiceServer
+    SpiceServer.SPICE_COMMAND = os.environ["SPICE_COMMAND"]
+
+if "LIBRARY_PATH" in os.environ:
+    from PySpice.Spice.NgSpice.Shared import NgSpiceShared
+    NgSpiceShared.LIBRARY_PATH = os.environ["LIBRARY_PATH"]
 
 @dataclass(kw_only=True)
 class SpiceComponent:

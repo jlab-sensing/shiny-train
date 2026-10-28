@@ -56,3 +56,59 @@ spicelib.editor.editor_errors.UnrecognizedSyntaxError: Line: "S1 /source /C1 Net
 ### What non-ideal capacitor model is being used?
 
 [see this](https://www.ecircuitcenter.com/Calc/Cap_Model/Create_Cap_SPICE_Model.htm)
+
+### Simulation error
+
+If you are getting something like the following error, then it could be due to the ngspice version. Versions **35** and **47** are known to be working. Version **45** with `Ubuuntu 24.04` did not work.
+
+```
+simulation command "run" failed
+```
+
+**To fix:**
+
+> There is a more efficient way to do this but, this is just what we did to get it to work.
+
+Version 47 can be compiled from source and downloaded from [sourceforge](https://sourceforge.net/projects/ngspice/files/ng-spice-rework/47/).
+
+We ran the following for the `ngspice` binary.
+
+```
+./compile_linux.sh
+```
+
+Then ran the fallowing to build the shared library.
+
+```
+mkdir ngspice-47-build
+pushd ngspice-47-build
+
+../configure \
+  --prefix=/usr/local \
+  --enable-xspice \
+  --disable-debug \
+  --enable-cider \
+  --with-readline=yes \
+  --enable-openmp \
+  --with-ngshared
+
+make -j$(nproc)
+```
+
+These were the paths to the compiled binaries.
+
+```
+./ngspice-47/release/src/ngspice"
+./ngspice-47/ngspice-47-build/src/.libs/libngspice.so.0.0.16"
+```
+
+Then you can set environment variables to specify these versions. Adding them to `.bashrc` will make them persistant.
+
+```
+export SPICE_COMMAND="/home/mwmast/Downloads/ngspice-47/release/src/ngspice"
+export LIBRARY_PATH="/home/mwmast/Downloads/ngspice-47/ngspice-47-build/src/.libs/libngspice.so.0.0.16"
+```
+
+Resources:
+- https://pyspice.fabrice-salvaire.fr/releases/v1.4/installation.html#ngspice-compilation
+- https://pyspice.fabrice-salvaire.fr/releases/v1.4/faq.html#how-to-set-the-ngspice-library-path
