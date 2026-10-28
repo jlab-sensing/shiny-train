@@ -904,6 +904,8 @@ class LeacSimConfig(CapacitorStorageSimConfig):
 
         self.cap_limit = cap_limit
 
+        self.replan_depth = replan_depth
+
         # "children": charge only the caps of the active task's possible next
         #     tasks (harvest idles when none needs charge).
         # "fallback": if no child cap needs charge, feed the active cap; if it
@@ -975,6 +977,11 @@ class LeacSimConfig(CapacitorStorageSimConfig):
         self.last_forecast = None
 
         self.assignment = None
+
+
+        # save the startup hash
+        self.save_startup_hash()
+
 
         tasks = tasks_from_sm(self.sink.sm)
 

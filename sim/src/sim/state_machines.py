@@ -84,8 +84,77 @@ class MATRSinkSM(StateChart):
         self.a = a
         self.b = b
         self.transitions = make_transition_matrix(a, b)
+        self.seed = seed
         self.rng = np.random.default_rng(seed)
         super().__init__(**kwargs)
+
+
+    def __getstate__(self):
+        """Serialize only simulation state and configuration parameters."""
+        state = self.__dict__.copy()
+
+        # 1. Drop python-statemachine engine internals containing local closures & adapters
+        engine_keys = [
+            "rng",
+            "_callbacks",
+            "_engine",
+            "_config",
+            "_listeners",
+            "_state_instances",
+            "_substates",
+            # State objects are class descriptors, not per-instance data
+            "task",
+            "measure",
+            "analyze",
+            "tx",
+            "rx",
+            "sleep",
+            "h",
+        ]
+        for key in engine_keys:
+            state.pop(key, None)
+
+        # 2. Record the active state name so it can be restored on unpickle
+        state["_saved_active_state_id"] = self._get_current_state_id()
+
+        # 3. Convert transitions dictionary of ndarrays to nested lists/tuples for clean pickling
+        if "transitions" in state and isinstance(state["transitions"], dict):
+            state["transitions"] = {
+                k: v.tolist() if hasattr(v, "tolist") else v
+                for k, v in state["transitions"].items()
+            }
+
+        return state
+
+    def __setstate__(self, state):
+        """Restore state and reinitialize the statemachine engine."""
+        saved_state_id = state.pop("_saved_active_state_id", None)
+
+        # 1. Restore transitions back to ndarrays
+        if "transitions" in state and isinstance(state["transitions"], dict):
+            state["transitions"] = {
+                k: np.array(v) for k, v in state["transitions"].items()
+            }
+
+        # 2. Restore instance attributes
+        self.__dict__.update(state)
+
+        # 3. Rebuild the statemachine engine, callbacks, and registries
+        super().__init__()
+
+        # 4. Restore the random number generator
+        self.rng = np.random.default_rng(self.seed)
+
+        # 5. Restore active state if needed
+        if saved_state_id and saved_state_id != "sleep":
+            # If it was in an active task, transition or activate the corresponding state
+            try:
+                target_state = getattr(self.task, saved_state_id, None)
+                if target_state:
+                    self.current_state = target_state
+            except Exception:
+                pass
+
 
     def _p(self, src, dst):
         return self.transitions[src][self.TASK_NAMES.index(dst)]

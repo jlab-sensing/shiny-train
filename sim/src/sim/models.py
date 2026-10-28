@@ -15,9 +15,11 @@ from dataclasses import dataclass
 from itertools import pairwise
 from multiprocessing import Manager, Pool
 from queue import Queue
+import hashlib
+import tempfile
+
 
 import h5py
-
 # import matplotlib
 # matplotlib.use('QtAgg')
 import matplotlib.pyplot as plt
@@ -32,6 +34,17 @@ from PySpice.Spice.NgSpice.Shared import NgSpiceShared
 from PySpice.Unit import u_kOhm, u_ms, u_Ohm, u_s, u_V
 from scipy.integrate import cumulative_trapezoid
 from tqdm import tqdm
+
+
+# disable matplotlib warnings for max figs
+plt.rcParams["figure.max_open_warning"] = 0
+
+# Suppress warnings specifically from the NgSpiceShared class
+import logging
+logging.getLogger("PySpice.Spice.NgSpice.Shared.NgSpiceShared").setLevel(
+    logging.ERROR
+)
+
 
 
 @dataclass(kw_only=True)
@@ -957,7 +970,6 @@ class CapacitorStorageSimConfig:
         a global config number.
 
         Args:
-            cb: Callback function
             src: Power source
             caps: Capacitor array values
             sink: Power sink
@@ -983,11 +995,77 @@ class CapacitorStorageSimConfig:
         else:
             self.sw = Switches.IdealSwitch()
 
+        # store initial configuration hash
+        self.save_startup_hash()
+
         # Initialize number of switches
         SwitchedComponent.__init__(src, p_lines)
         SwitchedComponent.__init__(sink, p_lines)
         for cap in caps:
             SwitchedComponent.__init__(cap, p_lines)
+
+    def save_startup_hash(self, excluded_attr: list[str] | None = None):
+        """Saves the startup hash.
+
+        Args:
+            excluded_attr: Attributes to exclude during hashing
+        """
+
+        self.startup_hash = self._hash(excluded_attr)
+
+    def _hash(self, excluded_attr: list[str] | None = None) -> str:
+        """Generate a SHA-256 hash of the object's attributes.
+
+        Attributes can be excluded by setting self.excluded_attr.
+
+        Args:
+            excluded_attr: Attributes to exclude during hashing
+
+        Returns:
+            SHA-256 hash hex string
+
+        Raises:
+            RuntimeError: When the configuration cannot be pickled.
+        """
+
+        # NOTE (jmadden173): This attr checking is really not ideal since it
+        # does not extend to object instances. You can only use it on direct
+        # kwargs to the classes.
+
+        # NONE checking
+        if not excluded_attr:
+            excluded_attr = []
+
+        if "p_lines" in excluded_attr:
+            raise RuntimeError("Cannot exclude p_lines as it changes the number of components")
+
+        # defaults to include, does not have to exist
+        default_excluded_attr = [
+            "startup_hash",
+            "name"
+        ]
+
+        # create copy of dict
+        attr = vars(self).copy()
+
+        # remove any user specified args
+        for k in excluded_attr:
+            attr.pop(k)
+
+        # ignore if attr don't exist
+        for k in default_excluded_attr:
+            attr.pop(k, None)
+
+        # catch pickling errors
+        try:
+            pkl = pickle.dumps(attr)
+        except Exception:
+            raise RuntimeError("Configuration cannot be pickled.")
+
+        # generate hashstring
+        sha256 = hashlib.sha256(pkl).hexdigest()
+
+        return sha256
 
     def reset(self):
         """Disconnect all switches."""
@@ -2860,41 +2938,38 @@ class SimulationRunner:
         configs: list[CapacitorStorageSimConfig],
         nproc: int | None = None,
         plotter: SimulationPlotter | None = None,
+        results_dir: str = "",
     ):
         """
         Initialize a runner to parallelize simulations.
 
         Names are used to label plots.
 
+        `results_dir` is used for both saving and checking that results for
+        a given configuration exist. If not specified then it will create a new
+        tmp directory to store them.
+
         Args:
-            configs: Simulation configurations.
-            nproc: Number of processes to spawn.
-            plotter: Simluation plotter.
+            configs: Simulation configurations
+            nproc: Number of processes to spawn
+            plotter: Simluation plotter
+            results_dir: Path to save results
         """
 
         self.configs = configs
 
         self.nproc = nproc
 
+        if results_dir:
+            self.results_dir = results_dir
+        else:
+            self.results_dir = tempfile.mkdtemp()
+
         # propogate plotter to simulations
         if plotter:
             self.plotter = plotter
         else:
             self.plotter = SimulationPlotter()
-
-    def add(self, configs: list[CapacitorStorageSimConfig]):
-        """Adds additional simulation configurations to run.
-
-
-        Args:
-            configs: Set of simulation configurations.
-        """
-
-        # save to class
-        self.configs = configs
-
-        for c in configs:
-            pass
 
     def run(
         self,
@@ -2961,17 +3036,23 @@ class SimulationRunner:
         return results
 
 
-    def save(self, directory: str):
+    def save(self):
         """Save collection of results to directory.
 
         Args:
             directory: Directory containing pickles
         """
 
-        os.makedirs(directory, exist_ok=True)
+        # check results exist
+        if not self.results:
+            raise RuntimeError("No results to save.")
 
+        # save to directory
         for res in self.results:
-            path = os.path.join(directory, res.name)
+            path = os.path.join(
+                self.results_dir,
+                f"{res.config.startup_hash}.pkl"
+            )
             res.save(path)
 
 
@@ -2995,6 +3076,22 @@ class SimulationRunner:
 
         return results
 
+    def _check_results_exist(self, config: CapacitorStorageSimConfig) -> SimulationResults | None:
+        """Checks if results already exist.
+
+        Args:
+            config: Simulation configuration
+
+        Returns:
+            Results if they exist, otherwise none.
+        """
+
+        for file in os.listdir(self.results_dir):
+            basename = os.path.splitext(file)[0]
+            if file.endswith('.pkl') and basename == config.startup_hash:
+                return SimulationResults.load(os.path.join(self.results_dir, file))
+
+        return None
 
     def _run_sim(
         self, idx: int, config: CapacitorStorageSimConfig, queue: Queue
@@ -3009,6 +3106,11 @@ class SimulationRunner:
         Returns:
             Final simuliation results.
         """
+
+        # load results if they exist
+        result = self._check_results_exist(config)
+        if result:
+            return result
 
         last = -1.0
         step = config.src.duration / 200
