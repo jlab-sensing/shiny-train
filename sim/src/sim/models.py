@@ -2990,7 +2990,11 @@ class SimulationRunner:
         """
         with Manager() as m:
             q = m.Queue()
-            single_bar = len(self.configs) > bars_limit
+
+            if bars_limit != 0:
+                single_bar = len(self.configs) > bars_limit
+            else:
+                single_bar = False
 
             if progress_bar:
                 if single_bar:
