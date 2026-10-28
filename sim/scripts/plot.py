@@ -40,6 +40,7 @@ def plot_multiple(directory: str):
     plotter.plot(res)
     plotter.show()
 
+
 def entry():
     """Entrypoint to the script.
 
@@ -56,6 +57,7 @@ def entry():
         plot_multiple(args.path)
     else:
         raise RuntimeError("Path is not a file or directory")
+
 
 if __name__ == "__main__":
     entry()

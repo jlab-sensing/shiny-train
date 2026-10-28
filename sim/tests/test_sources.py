@@ -45,7 +45,6 @@ class TestSources(unittest.TestCase):
 
         src.post_sim()
 
-
     def test_bonito_name(self):
         """Check getting different nodes power data."""
 

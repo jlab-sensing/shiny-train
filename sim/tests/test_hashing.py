@@ -1,20 +1,16 @@
-import hashlib
-import pickle
 import unittest
-from unittest.mock import MagicMock
-
-from sim.models import (
-    CapacitorStorageSimConfig,
-    ConstantSource,
-    CVCapacitor,
-    ConstantSink,
-    BonitoSource,
-    SMSink,
-)
 
 from sim.callback import (
-    MATRSinkSM,
     LeacSimConfig,
+    MATRSinkSM,
+)
+from sim.models import (
+    BonitoSource,
+    CapacitorStorageSimConfig,
+    ConstantSink,
+    ConstantSource,
+    CVCapacitor,
+    SMSink,
 )
 
 
@@ -44,7 +40,7 @@ class TestCapacitorStorageSimConfigHash(unittest.TestCase):
             caps=[CVCapacitor(v) for v in cap_values],
             sink=SMSink(sink=MATRSinkSM()),
             p_lines=2,
-            name=name
+            name=name,
         )
 
         return cfg
@@ -66,7 +62,6 @@ class TestCapacitorStorageSimConfigHash(unittest.TestCase):
         config2 = self.create_config()
 
         self.assertEqual(config1._hash(), config2._hash())
-
 
     def test_hash_exclusion(self):
         """Test that modifying an excluded attribute does NOT change the hash."""

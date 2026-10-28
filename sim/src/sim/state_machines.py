@@ -17,8 +17,8 @@ def make_transition_matrix(a, b):
     return {
         "measure": np.array([0, 1, 0, 0]),
         "analyze": np.array([a, 0, 1 - a, 0]),
-        "tx":      np.array([0, 0, 0, 1]),
-        "rx":      np.array([1 - b, 0, b, 0]),
+        "tx": np.array([0, 0, 0, 1]),
+        "rx": np.array([1 - b, 0, b, 0]),
     }
 
 
@@ -31,9 +31,8 @@ class Task:
 
 class MATRSinkSM(StateChart):
     load_value = 4.64e-4 * DC_VOLTS  # OUTPUT: the energy consumption for next timestep
-    TASK_NAMES = ['measure', 'analyze', 'tx', 'rx']
+    TASK_NAMES = ["measure", "analyze", "tx", "rx"]
     wake_energy = None
-
 
     class task(State.Compound):
         measure = State(
@@ -52,7 +51,11 @@ class MATRSinkSM(StateChart):
         )
         h = HistoryState(type="deep")
 
-    sleep = State("sleep", initial=True, value=Task(cost=4.64e-4 * DC_VOLTS, duration=0.01, name="sleep"))
+    sleep = State(
+        "sleep",
+        initial=True,
+        value=Task(cost=4.64e-4 * DC_VOLTS, duration=0.01, name="sleep"),
+    )
     # replan = State("replan", value=4.64e-4 * DC_VOLTS)
 
     # Self-transitions while executing, advance when done
@@ -87,7 +90,6 @@ class MATRSinkSM(StateChart):
         self.seed = seed
         self.rng = np.random.default_rng(seed)
         super().__init__(**kwargs)
-
 
     def __getstate__(self):
         """Serialize only simulation state and configuration parameters."""
@@ -155,15 +157,14 @@ class MATRSinkSM(StateChart):
             except Exception:
                 pass
 
-
     def _p(self, src, dst):
         return self.transitions[src][self.TASK_NAMES.index(dst)]
 
     def analyze_pass(self, **kwargs):
-        return self.rng.random() < self._p("analyze", "tx")   # 1 - a
+        return self.rng.random() < self._p("analyze", "tx")  # 1 - a
 
     def rx_pass(self, **kwargs):
-        return self.rng.random() < self._p("rx", "measure")   # 1 - b
+        return self.rng.random() < self._p("rx", "measure")  # 1 - b
 
     def _get_task_state_id(self):
         for state in self.configuration:
@@ -171,7 +172,7 @@ class MATRSinkSM(StateChart):
                 state.is_active
                 and hasattr(state, "value")
                 and isinstance(state.value, Task)
-                and state.id == 'sleep'
+                and state.id == "sleep"
             ):
                 id = state.id
                 return id, np.array([[0]])

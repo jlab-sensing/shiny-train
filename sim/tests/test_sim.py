@@ -85,7 +85,7 @@ class TestSim(unittest.TestCase):
         self.assertTrue(True)
 
     # TODO(jmadden173): fix this test
-    #def test_spice_src(self):
+    # def test_spice_src(self):
     #    """Spice power source model"""
 
     #    class ChargeConfig(CapacitorStorageSimConfig):

@@ -4,6 +4,10 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 
+from sim.callback import (
+    LeacSimConfig,
+    MATRSinkSM,
+)
 from sim.models import (
     BonitoSource,
     Capacitor,
@@ -17,11 +21,6 @@ from sim.models import (
     SimulationResults,
     SimulationRunner,
     SMSink,
-)
-
-from sim.callback import (
-    LeacSimConfig,
-    MATRSinkSM,
 )
 
 
@@ -69,7 +68,6 @@ def create_runner_configs() -> list[CapacitorStorageSimConfig]:
     return configs
 
 
-
 class TestSaveLoad(unittest.TestCase):
     def test_save_load(self):
         cap_values = [10e-6, 100e-6]
@@ -82,7 +80,6 @@ class TestSaveLoad(unittest.TestCase):
 
         sim = CapacitorStorageSim(config)
         save_res = sim.run()
-
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             filepath = os.path.join(tmp_dir, "results.pkl")
@@ -133,7 +130,6 @@ class TestSaveLoad(unittest.TestCase):
                 runner2.run()
 
         self.assertTrue(True)
-
 
     def test_runner_results_exist(self):
         """Tests that the runner can load if results already exist."""
@@ -189,6 +185,7 @@ class TestSaveLoad(unittest.TestCase):
             runner.run(progress_bar=False)
 
             runner.save()
+
 
 if __name__ == "__main__":
     unittest.main()

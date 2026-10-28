@@ -13,10 +13,12 @@ replan when
 which is a variance threshold that is justified by a brownout-risk level and
 scales with the energy actually stored, rather than a fixed constant in J^2.
 """
+
 from collections import defaultdict
 
 import numpy as np
-from sim.leaf_distribution import sweep, moments
+
+from sim.leaf_distribution import moments, sweep
 
 CONST_VOLTAGE = 3.3
 SCALE = 10.0  # measured power; 1.0 reproduces the earlier under-scaled values
@@ -157,37 +159,51 @@ if __name__ == "__main__":
     one_cap = usable_energy(6e-3, 3.2)
     two_caps = 2 * one_cap
 
-    print(f"SCALE={SCALE}  alpha(A->B)={1-a:.2f}  beta(B->A)={1-b:.2f}  "
-          f"lambda={a+b-1:+.2f}")
-    print(f"budgets: one 6 mF cap {one_cap*1e3:.1f} mJ, two {two_caps*1e3:.1f} mJ\n")
+    print(
+        f"SCALE={SCALE}  alpha(A->B)={1 - a:.2f}  beta(B->A)={1 - b:.2f}  "
+        f"lambda={a + b - 1:+.2f}"
+    )
+    print(
+        f"budgets: one 6 mF cap {one_cap * 1e3:.1f} mJ, two {two_caps * 1e3:.1f} mJ\n"
+    )
 
     print(" D   mean(mJ)  std(mJ)   computed P(E>30.7mJ)  Cantelli bound")
     for D, mean, var, marg in profile:
-        print(f"{D:2d}  {mean*1e3:8.2f}  {np.sqrt(var)*1e3:7.2f}   "
-              f"{exact_tail(marg, one_cap):20.4f}  {cantelli_bound(mean, var, one_cap):14.4f}")
+        print(
+            f"{D:2d}  {mean * 1e3:8.2f}  {np.sqrt(var) * 1e3:7.2f}   "
+            f"{exact_tail(marg, one_cap):20.4f}  {cantelli_bound(mean, var, one_cap):14.4f}"
+        )
 
     print("\nTrigger depth D* (Cantelli) and computed brownout risk at D*:")
     for budget, label in [(one_cap, "one cap"), (two_caps, "two caps")]:
         for p in [0.01, 0.05, 0.10, 0.25]:
             D = trigger_depth(profile, budget, p)
             risk = exact_tail(profile[D][3], budget) if D is not None else float("nan")
-            print(f"  {label:8s} p_target={p:4.2f}  D*={D}  computed risk at D*={risk:.4f}")
+            print(
+                f"  {label:8s} p_target={p:4.2f}  D*={D}  computed risk at D*={risk:.4f}"
+            )
 
-    print("\nSizing: budget and capacitance (at 3.2 V) needed for a D-task horizon at risk p")
+    print(
+        "\nSizing: budget and capacitance (at 3.2 V) needed for a D-task horizon at risk p"
+    )
     print(" D    p    B+_Cantelli(mJ)  B_quantile(mJ)  C+_Cantelli(mF)  C_quantile(mF)")
     for D, mean, var, marg in profile[1:9]:
         for p in [0.01, 0.05]:
             bc, be = required_budget(mean, var, p), exact_required_budget(marg, p)
-            print(f"{D:2d}  {p:4.2f}  {bc*1e3:15.1f}  {be*1e3:14.1f}  "
-                  f"{capacitance_for(bc)*1e3:15.1f}  {capacitance_for(be)*1e3:14.1f}")
+            print(
+                f"{D:2d}  {p:4.2f}  {bc * 1e3:15.1f}  {be * 1e3:14.1f}  "
+                f"{capacitance_for(bc) * 1e3:15.1f}  {capacitance_for(be) * 1e3:14.1f}"
+            )
 
     print("\nSmallest single capacitor (3.2 V) that can run each task alone:")
     for name, E in zip(["measure", "analyze", "tx", "rx"], e):
-        print(f"  {name:8s} {E*1e3:6.1f} mJ -> {capacitance_for(E)*1e3:5.1f} mF")
+        print(f"  {name:8s} {E * 1e3:6.1f} mJ -> {capacitance_for(E) * 1e3:5.1f} mF")
 
     print("\nExpected tasks completed before brownout, E[N(B)]:")
     long_profile = depth_profile(P, e, start=0, max_depth=40)
     for B, label in [(one_cap, "one cap"), (two_caps, "two caps")]:
-        print(f"  {label:8s} B={B*1e3:5.1f} mJ  E[N]={expected_completed(long_profile, B):.3f}")
+        print(
+            f"  {label:8s} B={B * 1e3:5.1f} mJ  E[N]={expected_completed(long_profile, B):.3f}"
+        )
 
     print("\nFigures: run figures.py")
