@@ -3032,6 +3032,7 @@ class SimulationRunner:
         self.nproc = nproc
 
         if results_dir:
+            os.makedirs(results_dir, exist_ok=True)
             self.results_dir = results_dir
         else:
             self.results_dir = tempfile.mkdtemp()
@@ -3162,7 +3163,6 @@ class SimulationRunner:
         Args:
             result: Result from simulation.
         """
-
 
         path = os.path.join(self.results_dir, f"{result.config.startup_hash}.pkl")
         result.save(path)
