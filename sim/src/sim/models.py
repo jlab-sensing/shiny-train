@@ -794,7 +794,7 @@ class BonitoSource(Source):
         # Get power from the dataset using the persistent handle
         power = power_ds[self.idx]
 
-        return power
+        return power*64
 
     def pre_sim(self):
         """Open file once in simulation."""
@@ -1123,7 +1123,8 @@ class SimulationResults:
             self.farads: list[float] = []
             self.name = ""
 
-        self.config = config
+        self.startup_hash = config.startup_hash if config else ""
+        self.config = None
 
         self.ts: dict = {}
         self.from_analysis(analysis)
@@ -1159,7 +1160,7 @@ class SimulationResults:
         """
 
         if not path:
-            path = self.name
+            path = os.path.join(self.results_dir, f"{res.startup_hash}.pkl")
 
         directory = os.path.dirname(path)
         if directory:
