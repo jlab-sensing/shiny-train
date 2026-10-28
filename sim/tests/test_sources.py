@@ -32,6 +32,8 @@ class TestSources(unittest.TestCase):
 
         src = BonitoSource(data_path, voltage=1.65, downsample=1)
 
+        src.pre_sim()
+
         self.assertAlmostEqual(src.get_voltage(), 1.65)
         self.assertAlmostEqual(src.get_power(0.0), 5.69625264568467e-06)
         src.next()
@@ -41,6 +43,8 @@ class TestSources(unittest.TestCase):
         src.next()
         self.assertAlmostEqual(src.get_power(3.0e-05), 6.89668724e-06)
 
+        src.post_sim()
+
     def test_bonito_name(self):
         """Check getting different nodes power data."""
 
@@ -49,8 +53,12 @@ class TestSources(unittest.TestCase):
 
         src = BonitoSource(data_path, name="node3", voltage=2.7, downsample=1)
 
+        src.pre_sim()
+
         self.assertAlmostEqual(src.get_voltage(), 2.7)
         self.assertAlmostEqual(src.get_power(0.0), 3.652359120783698e-06)
+
+        src.post_sim()
 
     def test_bonito_downsample(self):
         """Check if downsample correctly gets the next datapoint."""
@@ -61,9 +69,13 @@ class TestSources(unittest.TestCase):
         # dataset is known to be 1e-5 dt, downsample to 0.1s
         src = BonitoSource(data_path, name="node3", voltage=2.7, downsample=10000)
 
+        src.pre_sim()
+
         self.assertAlmostEqual(src.get_power(0.0), 3.652359120783698e-06)
         src.next()
         self.assertAlmostEqual(src.get_power(0.1), 1.4404980150767657e-05)
+
+        src.post_sim()
 
     def test_bonito_offset(self):
         """Check we can successfully set the offset."""

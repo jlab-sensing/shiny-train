@@ -1,4 +1,5 @@
 """Exact leaf-energy distributions for a finite Markov task chain."""
+
 from collections import defaultdict
 
 

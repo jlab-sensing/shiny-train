@@ -96,7 +96,6 @@ class TestCaps(unittest.TestCase):
         self.assertTrue(True)
 
 
-
 class TestCapacitorList(unittest.TestCase):
     def test_e6_single_decade(self):
         result = capacitor_list(1e-6, 6.8e-6)
@@ -115,10 +114,21 @@ class TestCapacitorList(unittest.TestCase):
 
     def test_e12_single_decade(self):
         result = capacitor_list(1e-6, 8.2e-6, decade="E12")
-        expected = [1.0e-6, 1.2e-6, 1.5e-6, 1.8e-6, 2.2e-6, 2.7e-6,
-                    3.3e-6, 3.9e-6, 4.7e-6, 5.6e-6, 6.8e-6, 8.2e-6]
+        expected = [
+            1.0e-6,
+            1.2e-6,
+            1.5e-6,
+            1.8e-6,
+            2.2e-6,
+            2.7e-6,
+            3.3e-6,
+            3.9e-6,
+            4.7e-6,
+            5.6e-6,
+            6.8e-6,
+            8.2e-6,
+        ]
         self.assertEqual(result, expected)
-
 
     def test_bounds_are_inclusive(self):
         result = capacitor_list(1.5e-6, 4.7e-6)
@@ -152,8 +162,18 @@ class TestCapacitorList(unittest.TestCase):
         # 1e-6 .. 100e-6: two full E6 decades plus the 100e-6 endpoint
         result = capacitor_list(1e-6, 100e-6)
         expected = [
-            1e-6, 1.5e-6, 2.2e-6, 3.3e-6, 4.7e-6, 6.8e-6,
-            10e-6, 15e-6, 22e-6, 33e-6, 47e-6, 68e-6,
+            1e-6,
+            1.5e-6,
+            2.2e-6,
+            3.3e-6,
+            4.7e-6,
+            6.8e-6,
+            10e-6,
+            15e-6,
+            22e-6,
+            33e-6,
+            47e-6,
+            68e-6,
             100e-6,
         ]
         self.assertEqual(result, expected)
@@ -167,10 +187,6 @@ class TestCapacitorList(unittest.TestCase):
     def test_large_values(self):
         result = capacitor_list(1.0, 10.0)
         self.assertEqual(result, [1.0, 1.5, 2.2, 3.3, 4.7, 6.8, 10.0])
-
-
-
-
 
     def test_invalid_decade_raises(self):
         with self.assertRaises(NotImplementedError):
@@ -197,9 +213,6 @@ class TestCapacitorList(unittest.TestCase):
     def test_invalid_decade_checked_before_range(self):
         with self.assertRaises(NotImplementedError):
             capacitor_list(-1, -2, decade="bogus")
-
-
-
 
 
 if __name__ == "__main__":

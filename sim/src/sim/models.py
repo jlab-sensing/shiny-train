@@ -5,9 +5,11 @@ can be controlled from outside the original function.
 """
 
 import copy
+import hashlib
 import math
 import os
 import pickle
+import tempfile
 import threading
 from abc import ABC
 from collections.abc import Callable
@@ -32,6 +34,14 @@ from PySpice.Spice.NgSpice.Shared import NgSpiceShared
 from PySpice.Unit import u_kOhm, u_ms, u_Ohm, u_s, u_V
 from scipy.integrate import cumulative_trapezoid
 from tqdm import tqdm
+
+# disable matplotlib warnings for max figs
+plt.rcParams["figure.max_open_warning"] = 0
+
+# Suppress warnings specifically from the NgSpiceShared class
+import logging
+
+logging.getLogger("PySpice.Spice.NgSpice.Shared.NgSpiceShared").setLevel(logging.ERROR)
 
 
 @dataclass(kw_only=True)
@@ -559,6 +569,12 @@ class Source(SwitchedComponent, ABC):
 
         return
 
+    def pre_sim(self):
+        """Callback before the simulation starts."""
+
+    def post_sim(self):
+        """Callback after the simulation ends."""
+
 
 class ConstantSource(Source):
     def __init__(self, power: float, **kwargs):
@@ -655,9 +671,7 @@ class RWSource(Source):
         if power_floor > power_roof:
             raise RuntimeError("Power roof must be greater than power floor.")
         if power_floor > initial_mean or power_roof < initial_mean:
-            raise RuntimeError(
-                "Initial mean must be in [power_floor, power_roof]."
-            )
+            raise RuntimeError("Initial mean must be in [power_floor, power_roof].")
         self.mean = initial_mean
         self.stdev = stdev
         self.rng = np.random.default_rng(seed=seed)
@@ -675,7 +689,10 @@ class RWSource(Source):
         if time != self.time:
             while True:
                 delta = self.rng.normal(loc=0.0, scale=self.stdev)
-                if self.mean + delta < self.power_floor or self.mean + delta > self.power_roof:
+                if (
+                    self.mean + delta < self.power_floor
+                    or self.mean + delta > self.power_roof
+                ):
                     continue
                 else:
                     break
@@ -764,22 +781,31 @@ class BonitoSource(Source):
             time: Simulation time.
         """
 
-        with h5py.File(self.fullpath, "r") as file:
-            # iterate until we get to the next timestamp
-            # TODO (jmadden173): Can implement some sort of binary search to make
-            # this go after
-            while file["time"][self.idx] < time:
-                self.idx += self.downsample
+        # Reuse the persistent file handle opened in pre_sim()
+        # and cache dataset references to avoid repeated lookups
+        time_ds = self.file["time"]
+        power_ds = self.file["data"][self.name]
 
-            # check that simulation and data class are synced
-            # sim_time = (self.file["time"][self.idx] - self.offset)
-            # dt = sim_time - time
-            # if abs(dt) >= self.dt:
-            #    raise RuntimeError(f"Simulation ({sim_time}) and data timestamp ({time}) is not synced.")
+        # TODO (jmadden173): Can implement some sort of binary search to make
+        # this go faster instead of a linear scan
+        while time_ds[self.idx] < time:
+            self.idx += self.downsample
 
-            # get power from file
-            power = file["data"][self.name][self.idx]
-        return power*64
+        # Get power from the dataset using the persistent handle
+        power = power_ds[self.idx]
+
+        return power
+
+    def pre_sim(self):
+        """Open file once in simulation."""
+
+        self.file = h5py.File(self.fullpath, "r")
+
+    def post_sim(self):
+        """Close file once simulation ends."""
+
+        self.file.close()
+        del self.file
 
 
 class Sink(SwitchedComponent):
@@ -882,11 +908,11 @@ class Event:
     """
 
     def __init__(
-            self,
-            name: str,
-            time: float,
-            ignore: bool = False,
-            failed: bool = False,
+        self,
+        name: str,
+        time: float,
+        ignore: bool = False,
+        failed: bool = False,
     ):
         """Initialize a results label with a name and time.
 
@@ -920,7 +946,6 @@ class Event:
         return self.time < other.time
 
 
-
 class CapacitorStorageSimConfig:
     # number of config objects
     count = 0
@@ -942,7 +967,6 @@ class CapacitorStorageSimConfig:
         a global config number.
 
         Args:
-            cb: Callback function
             src: Power source
             caps: Capacitor array values
             sink: Power sink
@@ -968,11 +992,76 @@ class CapacitorStorageSimConfig:
         else:
             self.sw = Switches.IdealSwitch()
 
+        # store initial configuration hash
+        self.save_startup_hash()
+
         # Initialize number of switches
         SwitchedComponent.__init__(src, p_lines)
         SwitchedComponent.__init__(sink, p_lines)
         for cap in caps:
             SwitchedComponent.__init__(cap, p_lines)
+
+    def save_startup_hash(self, excluded_attr: list[str] | None = None):
+        """Saves the startup hash.
+
+        Args:
+            excluded_attr: Attributes to exclude during hashing
+        """
+
+        self.startup_hash = self._hash(excluded_attr)
+
+    def _hash(self, excluded_attr: list[str] | None = None) -> str:
+        """Generate a SHA-256 hash of the object's attributes.
+
+        Attributes can be excluded by setting self.excluded_attr.
+
+        Args:
+            excluded_attr: Attributes to exclude during hashing
+
+        Returns:
+            SHA-256 hash hex string
+
+        Raises:
+            RuntimeError: When the configuration cannot be pickled.
+        """
+
+        # NOTE (jmadden173): This attr checking is really not ideal since it
+        # does not extend to object instances. You can only use it on direct
+        # kwargs to the classes.
+
+        # NONE checking
+        if not excluded_attr:
+            excluded_attr = []
+
+        if "p_lines" in excluded_attr:
+            raise RuntimeError(
+                "Cannot exclude p_lines as it changes the number of components"
+            )
+
+        # defaults to include, does not have to exist
+        default_excluded_attr = ["startup_hash", "name"]
+
+        # create copy of dict
+        attr = vars(self).copy()
+
+        # remove any user specified args
+        for k in excluded_attr:
+            attr.pop(k)
+
+        # ignore if attr don't exist
+        for k in default_excluded_attr:
+            attr.pop(k, None)
+
+        # catch pickling errors
+        try:
+            pkl = pickle.dumps(attr)
+        except Exception:
+            raise RuntimeError("Configuration cannot be pickled.")
+
+        # generate hashstring
+        sha256 = hashlib.sha256(pkl).hexdigest()
+
+        return sha256
 
     def reset(self):
         """Disconnect all switches."""
@@ -1034,6 +1123,8 @@ class SimulationResults:
             self.farads: list[float] = []
             self.name = ""
 
+        self.config = config
+
         self.ts: dict = {}
         self.from_analysis(analysis)
 
@@ -1088,7 +1179,6 @@ class SimulationResults:
 
         return sorted({e.name for e in self.events})
 
-
     def event_count(self, name: str = "") -> int:
         """Total number of events.
 
@@ -1101,8 +1191,7 @@ class SimulationResults:
 
         return len(self.events)
 
-
-    def event_cycles(self, start: str, end: str) -> int:
+    def event_cycles(self, start: str = "", end: str = "") -> int:
         """Number of transitions from end to start (cycles).
 
         Args:
@@ -1113,8 +1202,20 @@ class SimulationResults:
             Number of full cycles
         """
 
+        events = self.unique_events()
+
+        if not start:
+            start = events[0]
+
+        if not end:
+            end = events[-1]
+
+        print(f"start: {start}, end: {end}")
+
         sorted_events = sorted(self.events)
-        return sum(a.name != b.name for a, b in pairwise(sorted_events))
+        return sum(
+            (a.name == start) and (b.name == end) for a, b in pairwise(sorted_events)
+        )
 
     def event_failures(self) -> int:
         """Number of events that failed.
@@ -1124,7 +1225,6 @@ class SimulationResults:
         """
 
         return sum(e.failed for e in self.events)
-
 
     @staticmethod
     def load(path: str) -> "SimulationResults":
@@ -1153,7 +1253,6 @@ class SimulationResults:
         self.p_lines = config.p_lines
         self.farads = config.farads()
         self.name = config.name
-
 
     def get_slice(self) -> "SimulationResults":
         """Get a slice of the results.
@@ -1443,7 +1542,6 @@ class SimulationPlotter:
         """
 
         self.plot_multiple_ts(results)
-
 
     def plot_single_ts(self, res: SimulationResults):
         """Plots single simulation results on new figure.
@@ -1830,16 +1928,16 @@ class SimulationPlotter:
         # Okabe-Ito colorblind-safe palette
 
         colors = {
-            "Source":    "tab:blue",
-            "Sinked":    "tab:orange",
+            "Source": "tab:blue",
+            "Sinked": "tab:orange",
             "Remaining": "tab:green",
-            "Lost":      "tab:red",
+            "Lost": "tab:red",
         }
         hatches = {
-            "Source":    "",
-            "Sinked":    "",
+            "Source": "",
+            "Sinked": "",
             "Remaining": "//",
-            "Lost":      "..",
+            "Lost": "..",
         }
         bar_style = {
             "edgecolor": "black",
@@ -1854,18 +1952,33 @@ class SimulationPlotter:
 
         src = np.array([res.src_energy for res in results])
         sink_energies = {
-            "Sinked":    np.array([res.sink_energy for res in results]),
-            "Remaining": np.array([res.cap_energy  for res in results]),
-            "Lost":      np.array([res.diff_energy for res in results]),
+            "Sinked": np.array([res.sink_energy for res in results]),
+            "Remaining": np.array([res.cap_energy for res in results]),
+            "Lost": np.array([res.diff_energy for res in results]),
         }
 
-        ax.bar(x - offset, src, width, label="Source",
-               color=colors["Source"], hatch=hatches["Source"], **bar_style)
+        ax.bar(
+            x - offset,
+            src,
+            width,
+            label="Source",
+            color=colors["Source"],
+            hatch=hatches["Source"],
+            **bar_style,
+        )
 
         bottom = np.zeros(len(results))
         for label, energy in sink_energies.items():
-            ax.bar(x + offset, energy, width, bottom=bottom, label=label,
-                   color=colors[label], hatch=hatches[label], **bar_style)
+            ax.bar(
+                x + offset,
+                energy,
+                width,
+                bottom=bottom,
+                label=label,
+                color=colors[label],
+                hatch=hatches[label],
+                **bar_style,
+            )
             bottom += energy
 
         ax.set_xticks(x)
@@ -1876,8 +1989,6 @@ class SimulationPlotter:
         # Clean, publication-style axes
         ax.tick_params(direction="out")
         ax.legend()
-
-
 
     def _plot_final_counts(self, fig: Figure, results: list[SimulationResults]):
         """Plot the event counts per run."""
@@ -1921,7 +2032,6 @@ class SimulationPlotter:
         ax.margins(y=0.25)
         ax.legend()
 
-
     def _plot_final_transitions(self, fig: Figure, results: list[SimulationResults]):
         """Plot the number of transitions per run."""
 
@@ -1935,7 +2045,7 @@ class SimulationPlotter:
 
         transitions = {
             "Total": [res.event_count() for res in results],
-            "Cycles": [res.event_cycles("50s", "70s") for res in results],
+            "Cycles": [res.event_cycles() for res in results],
             "Failure": [res.event_failures() for res in results],
         }
 
@@ -1956,8 +2066,7 @@ class SimulationPlotter:
         ax.legend()
 
     def _plot_event_vertical(self, fig: Figure, results: list[SimulationResults]):
-        """Plots vertical lines at each event.
-        """
+        """Plots vertical lines at each event."""
 
         if not self._all_events(results):
             self._plot_text(fig, "No events")
@@ -1978,7 +2087,6 @@ class SimulationPlotter:
 
             ax.set_ylabel(result.name)
 
-
         for ax in axs[:][0]:
             # remove ticks
             ax.set_yticks([])
@@ -1991,8 +2099,7 @@ class SimulationPlotter:
         axs[-1][0].set_xlabel("Time (s)")
 
     def _plot_event_shaded(self, fig: Figure, results: list[SimulationResults]):
-        """Plots shaded regions in time between events.
-        """
+        """Plots shaded regions in time between events."""
 
         if not self._all_events(results):
             self._plot_text(fig, "No events")
@@ -2026,8 +2133,6 @@ class SimulationPlotter:
             ax.legend()
 
         axs[-1][0].set_xlabel("Time (s)")
-
-
 
     def _plot_event_line(self, fig: Figure, results: list[SimulationResults]):
         """Plot lines between events with color-coded markers at each transition."""
@@ -2082,7 +2187,6 @@ class SimulationPlotter:
 
         axs[-1].set_xlabel("Time (s)")
 
-
     def _plot_text(self, fig: Figure, text: str):
         """Plots text in place of a figure.
 
@@ -2094,20 +2198,20 @@ class SimulationPlotter:
         ax = fig.subplots()
 
         # Hide the axes borders, ticks, and labels
-        ax.axis('off')
+        ax.axis("off")
 
         # Display the text in the center of the figure
         ax.text(
-            0.5, 0.5,
+            0.5,
+            0.5,
             text,
             horizontalalignment="center",
             verticalalignment="center",
             transform=ax.transAxes,
             fontsize=14,
             color="gray",
-            style="italic"
+            style="italic",
         )
-
 
     def _all_events(self, results: list[SimulationResults]) -> set[Event]:
         """Check if results have events."""
@@ -2117,7 +2221,6 @@ class SimulationPlotter:
             events.update(res.events)
 
         return events
-
 
     def show(self):
         plt.show(block=False)
@@ -2147,7 +2250,6 @@ class SimulationPlotter:
         """Maximum end time for all results."""
 
         return max([res.end() for res in results])
-
 
 
 class CapacitorStorageSim:
@@ -2382,7 +2484,6 @@ class CapacitorStorageSim:
             voltage_expression=f"{{min(max(abs(V(v_r_source_raw)), {self.r_min}), {self.r_max})}}",
         )
 
-
         circuit.raw_spice += "R1 v_src_pos src R='{V(v_r_source)}'\n"
 
         # input power switches
@@ -2576,11 +2677,15 @@ class CapacitorStorageSim:
             maxord=2,
         )
 
+        self.config.src.pre_sim()
+
         analysis = self.simulator.transient(
             step_time=self.config.src.dt @ u_s,
             end_time=self.config.src.duration @ u_s,
             use_initial_condition=True,
         )
+
+        self.config.src.post_sim()
 
         # check source resistance tolerance
         r_src = np.asarray(analysis["v_r_source"])
@@ -2593,7 +2698,6 @@ class CapacitorStorageSim:
             raise RuntimeError("Sink resistance exceed tolerance bounds.")
 
         return analysis, self.shared.events
-
 
     def _exceeded_r_limit(
         self,
@@ -2608,8 +2712,8 @@ class CapacitorStorageSim:
         """
 
         # Allow 1% tolerance between the bonds
-        tol_min = self.r_min * (1. - tol)
-        tol_max = self.r_max * (1. + tol)
+        tol_min = self.r_min * (1.0 - tol)
+        tol_max = self.r_max * (1.0 + tol)
 
         return res.min() <= tol_min or tol_max <= res.max()
 
@@ -2830,41 +2934,38 @@ class SimulationRunner:
         configs: list[CapacitorStorageSimConfig],
         nproc: int | None = None,
         plotter: SimulationPlotter | None = None,
+        results_dir: str = "",
     ):
         """
         Initialize a runner to parallelize simulations.
 
         Names are used to label plots.
 
+        `results_dir` is used for both saving and checking that results for
+        a given configuration exist. If not specified then it will create a new
+        tmp directory to store them.
+
         Args:
-            configs: Simulation configurations.
-            nproc: Number of processes to spawn.
-            plotter: Simluation plotter.
+            configs: Simulation configurations
+            nproc: Number of processes to spawn
+            plotter: Simluation plotter
+            results_dir: Path to save results
         """
 
         self.configs = configs
 
         self.nproc = nproc
 
+        if results_dir:
+            self.results_dir = results_dir
+        else:
+            self.results_dir = tempfile.mkdtemp()
+
         # propogate plotter to simulations
         if plotter:
             self.plotter = plotter
         else:
             self.plotter = SimulationPlotter()
-
-    def add(self, configs: list[CapacitorStorageSimConfig]):
-        """Adds additional simulation configurations to run.
-
-
-        Args:
-            configs: Set of simulation configurations.
-        """
-
-        # save to class
-        self.configs = configs
-
-        for c in configs:
-            pass
 
     def run(
         self,
@@ -2930,20 +3031,21 @@ class SimulationRunner:
 
         return results
 
-
-    def save(self, directory: str):
+    def save(self):
         """Save collection of results to directory.
 
         Args:
             directory: Directory containing pickles
         """
 
-        os.makedirs(directory, exist_ok=True)
+        # check results exist
+        if not self.results:
+            raise RuntimeError("No results to save.")
 
+        # save to directory
         for res in self.results:
-            path = os.path.join(directory, res.name)
+            path = os.path.join(self.results_dir, f"{res.config.startup_hash}.pkl")
             res.save(path)
-
 
     @staticmethod
     def load(directory: str) -> list[SimulationResults]:
@@ -2965,6 +3067,24 @@ class SimulationRunner:
 
         return results
 
+    def _check_results_exist(
+        self, config: CapacitorStorageSimConfig
+    ) -> SimulationResults | None:
+        """Checks if results already exist.
+
+        Args:
+            config: Simulation configuration
+
+        Returns:
+            Results if they exist, otherwise none.
+        """
+
+        for file in os.listdir(self.results_dir):
+            basename = os.path.splitext(file)[0]
+            if file.endswith(".pkl") and basename == config.startup_hash:
+                return SimulationResults.load(os.path.join(self.results_dir, file))
+
+        return None
 
     def _run_sim(
         self, idx: int, config: CapacitorStorageSimConfig, queue: Queue
@@ -2979,6 +3099,11 @@ class SimulationRunner:
         Returns:
             Final simuliation results.
         """
+
+        # load results if they exist
+        result = self._check_results_exist(config)
+        if result:
+            return result
 
         last = -1.0
         step = config.src.duration / 200
@@ -3001,7 +3126,6 @@ class SimulationRunner:
         self.plotter.show()
 
 
-
 def capacitor_list(_min: float, _max: float, decade: str = "E6") -> list[float]:
     """Creates a E6 capacitor value list between two values.
 
@@ -3018,8 +3142,20 @@ def capacitor_list(_min: float, _max: float, decade: str = "E6") -> list[float]:
     elif decade == "E6":
         values = [10.0, 15.0, 22.0, 33.0, 47.0, 68.0]
     elif decade == "E12":
-        values = [10.0, 12.0, 15.0, 18.0, 22.0, 27.0, 33.0, 39.0, 47.0, 56.0,
-                  68.0, 82.0]
+        values = [
+            10.0,
+            12.0,
+            15.0,
+            18.0,
+            22.0,
+            27.0,
+            33.0,
+            39.0,
+            47.0,
+            56.0,
+            68.0,
+            82.0,
+        ]
     else:
         raise NotImplementedError(f"Decade {decade} is not implemented.")
 

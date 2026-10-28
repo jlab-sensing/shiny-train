@@ -4,7 +4,12 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 
+from sim.callback import (
+    LeacSimConfig,
+    MATRSinkSM,
+)
 from sim.models import (
+    BonitoSource,
     Capacitor,
     CapacitorStorageSim,
     CapacitorStorageSimConfig,
@@ -15,6 +20,7 @@ from sim.models import (
     SimulationPlotter,
     SimulationResults,
     SimulationRunner,
+    SMSink,
 )
 
 
@@ -62,8 +68,7 @@ def create_runner_configs() -> list[CapacitorStorageSimConfig]:
     return configs
 
 
-
-class TestTemplate(unittest.TestCase):
+class TestSaveLoad(unittest.TestCase):
     def test_save_load(self):
         cap_values = [10e-6, 100e-6]
 
@@ -75,7 +80,6 @@ class TestTemplate(unittest.TestCase):
 
         sim = CapacitorStorageSim(config)
         save_res = sim.run()
-
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             filepath = os.path.join(tmp_dir, "results.pkl")
@@ -91,13 +95,14 @@ class TestTemplate(unittest.TestCase):
 
     def test_runner_save_load(self):
         configs = create_runner_configs()
-        runner = SimulationRunner(configs)
-
-        with redirect_stderr(io.StringIO()):
-            runner.run()
 
         with tempfile.TemporaryDirectory() as tmp_dir:
-            runner.save(tmp_dir)
+            runner = SimulationRunner(configs, results_dir=tmp_dir)
+
+            with redirect_stderr(io.StringIO()):
+                runner.run()
+
+            runner.save()
 
             results = SimulationRunner.load(tmp_dir)
 
@@ -105,6 +110,82 @@ class TestTemplate(unittest.TestCase):
             plotter.plot_multiple_ts(results)
 
         self.assertTrue(True)
+
+    def test_runner_cache(self):
+        """Test two consecutive runner."""
+
+        configs = create_runner_configs()
+        configs2 = create_runner_configs()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # run and save results
+            runner = SimulationRunner(configs, results_dir=tmp_dir)
+            with redirect_stderr(io.StringIO()):
+                runner.run()
+            runner.save()
+
+            # run annother runner to check execution path
+            runner2 = SimulationRunner(configs2, results_dir=tmp_dir)
+            with redirect_stderr(io.StringIO()):
+                runner2.run()
+
+        self.assertTrue(True)
+
+    def test_runner_results_exist(self):
+        """Tests that the runner can load if results already exist."""
+
+        configs = create_runner_configs()
+        configs2 = create_runner_configs()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runner = SimulationRunner(configs, results_dir=tmp_dir)
+
+            with redirect_stderr(io.StringIO()):
+                runner.run()
+
+            runner.save()
+
+            runner2 = SimulationRunner(configs2, results_dir=tmp_dir)
+
+            for cfg in configs2:
+                res = runner2._check_results_exist(cfg)
+                self.assertIsNotNone(res)
+
+    def test_runner_result_not_exist(self):
+        """Tests that the runner can load if results already exist."""
+
+        configs = create_runner_configs()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runner = SimulationRunner(configs, results_dir=tmp_dir)
+
+            for cfg in configs:
+                res = runner._check_results_exist(cfg)
+                self.assertIsNone(res)
+
+    def test_results_save_leacs(self):
+        """Test saving of a typical leacs config"""
+
+        cap_values = [10e-3, 100e-3]
+
+        src = BonitoSource(duration=10, downsample=10000)
+        sink = SMSink(sink=MATRSinkSM())
+        caps = [CVCapacitor(c) for c in cap_values]
+
+        config = LeacSimConfig(
+            # from original config class
+            src=src,
+            caps=caps,
+            sink=sink,
+            p_lines=2,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            runner = SimulationRunner([config], results_dir=tmp_dir)
+            runner.run(progress_bar=False)
+
+            runner.save()
+
 
 if __name__ == "__main__":
     unittest.main()

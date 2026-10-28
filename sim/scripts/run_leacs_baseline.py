@@ -30,19 +30,28 @@ from sim.models import (
 from sim.state_machines import MATRSinkSM
 
 # --- settings ---------------------------------------------------------------
-CATALOG = capacitor_list(1e-3, 6.8e-3, decade="E6")   # 1.0, 1.5, 2.2, 3.3, 4.7, 6.8 mF
-CAP_LIMIT = 2                                         # LEACS's M
-A, B = 0.5, 0.5                                       # P(analyze -> measure), P(rx -> tx)
+CATALOG = capacitor_list(1e-3, 6.8e-3, decade="E6")  # 1.0, 1.5, 2.2, 3.3, 4.7, 6.8 mF
+CAP_LIMIT = 2  # LEACS's M
+A, B = 0.5, 0.5  # P(analyze -> measure), P(rx -> tx)
 # RUNTIME = dict(wake_rule="vmax", harvest_routing="fallback")   # vmax is LEACS's own rule
-RUNTIME = dict(wake_rule="energy", harvest_routing="fallback")   # vmax is LEACS's own rule
-SOURCE = dict(downsample=10000)                       # add filename=... for another Bonito source
+RUNTIME = dict(
+    wake_rule="energy", harvest_routing="fallback"
+)  # vmax is LEACS's own rule
+SOURCE = dict(downsample=10000)  # add filename=... for another Bonito source
 TRAIN_NODE, TEST_NODES = "node0", ["node1", "node2", "node3"]
 # TRAIN_NODE, TEST_NODES = "node2", ["node0", "node1", "node3"]
 TRAIN_SEEDS, TEST_SEEDS = [100, 101], [1, 2, 3]
-TRAIN_DURATION, TEST_DURATION = 1200, 3600            # simulated seconds
+TRAIN_DURATION, TEST_DURATION = 1200, 3600  # simulated seconds
+
+
+filepath = os.path.dirname(__file__)
+OUT = os.path.join(filepath, "..", "data", "submission", "leacs_energy_node0", "")
+os.makedirs(OUT, exist_ok=True)
+
+# Old filepaths for reference
 # OUT = "/home/mwmaster/catch/thimble_sims/leacs_baseline_node0"
 # OUT = "/home/mwmaster/catch/thimble_sims/leacs_baseline_node2"
-OUT = "/home/mwmaster/catch/thimble_sims/leacs_energy_node0"
+# OUT = "/home/mwmaster/catch/thimble_sims/leacs_energy_node0"
 # OUT = "/home/mwmaster/catch/thimble_sims/leacs_energy_node2"
 
 
@@ -59,16 +68,19 @@ class LeacsPlanConfig(LeacSimConfig):
         K, N = len(self.caps), len(plan)
         z = np.zeros(K * (N + 1))
         for i, j in enumerate(map(int, plan)):
-            z[j] = z[K + i * K + j] = 1.0          # select capacitor j; assign task i to it
+            z[j] = z[K + i * K + j] = 1.0  # select capacitor j; assign task i to it
         self.set_plan(z)
-        self.sm.cap = self.caps[int(plan[0])]      # the node starts with measure
+        self.sm.cap = self.caps[int(plan[0])]  # the node starts with measure
         self._prev = None
 
     def callback(self, time):
         state = self.sm._get_task_state_id()[0]
         prev, self._prev = self._prev, state
         super().callback(time)
-        if prev not in (None, "sleep") and state not in (prev, "sleep"):   # prev finished
+        if prev not in (None, "sleep") and state not in (
+            prev,
+            "sleep",
+        ):  # prev finished
             name = "report" if (prev, state) == ("rx", "measure") else f"done:{prev}"
             return Event(name=name, time=time)
         return None
@@ -84,8 +96,13 @@ def static_plans(catalog, max_caps):
         c = LeacsCapacitor(C, v_min=cv.v_min, v_max=cv.v_max)
         c.voltage = c.v_max
         full.append(c)
-    fits = [[(c.leakage * c.voltage + t.cost) * t.duration <= c.energy - c.min_energy for c in full]
-            for t in tasks]
+    fits = [
+        [
+            (c.leakage * c.voltage + t.cost) * t.duration <= c.energy - c.min_energy
+            for c in full
+        ]
+        for t in tasks
+    ]
     plans = []
     for p in np.ndindex(*[len(catalog)] * len(tasks)):
         used = set(p)
@@ -109,8 +126,12 @@ def make_config(plan, node, seed, duration):
 
 
 def tasks_per_hour(results, duration):
-    return [sum(e.name == "report" or e.name.startswith("done:") for e in r.events) * 3600 / duration
-            for r in results]
+    return [
+        sum(e.name == "report" or e.name.startswith("done:") for e in r.events)
+        * 3600
+        / duration
+        for r in results
+    ]
 
 
 def rank_plans():
@@ -121,9 +142,10 @@ def rank_plans():
     print(f"ranking {len(plans)} plans x {len(TRAIN_SEEDS)} seeds on {TRAIN_NODE}")
     scores, batch = {}, os.cpu_count() or 4
     for k in range(0, len(jobs), batch):
-        chunk = jobs[k:k + batch]
-        results = SimulationRunner([make_config(p, TRAIN_NODE, s, TRAIN_DURATION) for p, s in chunk]).run(
-            progress_bar=True)
+        chunk = jobs[k : k + batch]
+        results = SimulationRunner(
+            [make_config(p, TRAIN_NODE, s, TRAIN_DURATION) for p, s in chunk]
+        ).run(progress_bar=True)
         for (p, _), tph in zip(chunk, tasks_per_hour(results, TRAIN_DURATION)):
             scores.setdefault(p, []).append(tph)
         print(f"  {min(k + batch, len(jobs))}/{len(jobs)}")
@@ -132,9 +154,15 @@ def rank_plans():
     os.makedirs(OUT, exist_ok=True)
     with open(os.path.join(OUT, "ranking.csv"), "w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["plan", "n_caps", "leak_W", "tasks_per_h"] + [f"seed{s}" for s in TRAIN_SEEDS])
+        w.writerow(
+            ["plan", "n_caps", "leak_W", "tasks_per_h"]
+            + [f"seed{s}" for s in TRAIN_SEEDS]
+        )
         for p, n, leak in ranked:
-            w.writerow([p, n, f"{leak:.3e}", f"{np.mean(scores[p]):.1f}"] + [f"{v:.1f}" for v in scores[p]])
+            w.writerow(
+                [p, n, f"{leak:.3e}", f"{np.mean(scores[p]):.1f}"]
+                + [f"{v:.1f}" for v in scores[p]]
+            )
     for p, n, _ in ranked[:5]:
         print(f"  {p}  {n} cap(s)  {np.mean(scores[p]):7.1f} tasks/h")
     return ranked[0][0]
@@ -145,13 +173,19 @@ def main():
     best = rank_plans()
     print(f"LEACS plan: {best}")
 
-    configs = [make_config(best, node, seed, TEST_DURATION) for node in TEST_NODES for seed in TEST_SEEDS]
-    runner = SimulationRunner(configs)
+    configs = [
+        make_config(best, node, seed, TEST_DURATION)
+        for node in TEST_NODES
+        for seed in TEST_SEEDS
+    ]
+    runner = SimulationRunner(configs, results_dir=OUT)
     results = runner.run(progress_bar=True)
     for cfg, tph in zip(configs, tasks_per_hour(results, TEST_DURATION)):
         print(f"  {cfg.name}: {tph:.1f} tasks/h")
-    print(f"mean: {np.mean(tasks_per_hour(results, TEST_DURATION)):.1f} tasks/h; runtime {time.time() - start:.0f} s")
-    runner.save(OUT)
+    print(
+        f"mean: {np.mean(tasks_per_hour(results, TEST_DURATION)):.1f} tasks/h; runtime {time.time() - start:.0f} s"
+    )
+    runner.save()
     runner.plot()
     runner.show()
 
