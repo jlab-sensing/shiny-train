@@ -17,11 +17,11 @@ from dataclasses import dataclass
 from itertools import pairwise
 from multiprocessing import Manager, Pool
 from queue import Queue
-import warnings
-import weakref
-from typing import Any
 
 import h5py
+
+# import matplotlib
+# matplotlib.use('QtAgg')
 import matplotlib.pyplot as plt
 import numpy as np
 import PySpice
@@ -43,14 +43,6 @@ import logging
 
 logging.getLogger("PySpice.Spice.NgSpice.Shared.NgSpiceShared").setLevel(logging.ERROR)
 
-# Read env vars to set binary variables
-if "SPICE_COMMAND" in os.environ:
-    from PySpice.Spice.NgSpice.Server import SpiceServer
-    SpiceServer.SPICE_COMMAND = os.environ["SPICE_COMMAND"]
-
-if "LIBRARY_PATH" in os.environ:
-    from PySpice.Spice.NgSpice.Shared import NgSpiceShared
-    NgSpiceShared.LIBRARY_PATH = os.environ["LIBRARY_PATH"]
 
 @dataclass(kw_only=True)
 class SpiceComponent:
@@ -1131,8 +1123,7 @@ class SimulationResults:
             self.farads: list[float] = []
             self.name = ""
 
-        self.startup_hash = config.startup_hash if config else ""
-        self.config = None
+        self.config = config
 
         self.ts: dict = {}
         self.from_analysis(analysis)
@@ -1168,83 +1159,14 @@ class SimulationResults:
         """
 
         if not path:
-            path = os.path.join(self.results_dir, f"{res.startup_hash}.pkl")
+            path = self.name
 
         directory = os.path.dirname(path)
         if directory:
             os.makedirs(directory, exist_ok=True)
 
         with open(path, "wb") as f:
-            try:
-                pickle.dump(self, f)
-            except TypeError:
-                unpicklable = self._find_unpicklable_weakrefs(self)
-                for path, ref in unpicklable:
-                    raise TypeError(f"Weakref found at: {path} -> points to: {ref()}")
-
-    @staticmethod
-    def _find_unpicklable_weakrefs(obj: Any, max_depth: int=20) -> list[tuple]:
-        """Recursively search an object tree to locate weak reference instances preventing pickling.
-
-        Traverses object attributes, dictionaries, sequences, and slots up to a maximum
-        recursion depth while handling cyclic references.
-
-        Args:
-            obj: The root object to inspect.
-            max_depth: Maximum recursion depth to prevent infinite loops on deeply nested structures.
-
-        Returns:
-            A list of tuples, each containing the dot/index path string to the weak reference
-            and the weak reference instance itself.
-        """
-
-        visited = set()
-        found = []
-
-        def _traverse(current, path, depth):
-            if depth > max_depth:
-                return
-
-            obj_id = id(current)
-            if obj_id in visited:
-                return
-            visited.add(obj_id)
-
-            # Check if the current object itself is a weakref
-            if isinstance(
-                current, (weakref.ReferenceType, weakref.ProxyType, weakref.CallableProxyType)
-            ):
-                found.append((path, current))
-                return
-
-            # Traverse dicts
-            if isinstance(current, dict):
-                for k, v in current.items():
-                    _traverse(k, f"{path}.keys()[{k!r}]", depth + 1)
-                    _traverse(v, f"{path}[{k!r}]", depth + 1)
-
-            # Traverse lists, tuples, sets
-            elif isinstance(current, (list, tuple, set, frozenset)):
-                for idx, item in enumerate(current):
-                    _traverse(item, f"{path}[{idx}]", depth + 1)
-
-            # Traverse arbitrary objects via attributes
-            elif hasattr(current, "__dict__"):
-                for attr, val in current.__dict__.items():
-                    _traverse(val, f"{path}.{attr}", depth + 1)
-
-            # Traverse slots if defined
-            if hasattr(type(current), "__slots__"):
-                slots = type(current).__slots__
-                if isinstance(slots, str):
-                    slots = [slots]
-                for slot in slots:
-                    if hasattr(current, slot):
-                        _traverse(getattr(current, slot), f"{path}.{slot}", depth + 1)
-
-        _traverse(obj, "root", 0)
-        return found
-
+            pickle.dump(self, f)
 
     def unique_events(self) -> list[str]:
         """Get the names of unique events.
@@ -1287,6 +1209,8 @@ class SimulationResults:
 
         if not end:
             end = events[-1]
+
+        print(f"start: {start}, end: {end}")
 
         sorted_events = sorted(self.events)
         return sum(
@@ -3033,7 +2957,6 @@ class SimulationRunner:
         self.nproc = nproc
 
         if results_dir:
-            os.makedirs(results_dir, exist_ok=True)
             self.results_dir = results_dir
         else:
             self.results_dir = tempfile.mkdtemp()
@@ -3048,97 +2971,64 @@ class SimulationRunner:
         self,
         end_time: float = 2.0,
         progress_bar: bool = True,
-        bars_limit: int = 0,
     ) -> list[SimulationResults]:
         """Runs simulations concurrently.
 
         Args:
             end_time: Duration of simulation
             progress_bar: Show progress bar
-            bars_limit: Maximum number of configs allowed before switching
-                to a single aggregated progress bar.
 
         Returns:
             Dictionary containing the results.
         """
+
         with Manager() as m:
             q = m.Queue()
 
-            if bars_limit != 0:
-                single_bar = len(self.configs) > bars_limit
-            else:
-                single_bar = False
-
             if progress_bar:
-                if single_bar:
-                    # Single aggregated bar: total progress across all configs
-                    total_duration = sum(cfg.src.duration for cfg in self.configs)
-                    bar = tqdm(
-                        total=total_duration,
-                        desc="Simulations Progress",
-                        leave=False,
-                        bar_format="{desc}: {percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
-                    )
-                    # Track latest reported sim_time per configuration
-                    current_times = [0.0] * len(self.configs)
-
-                    def listener():
-                        while True:
-                            msg = q.get()
-                            if msg is None:
-                                break
-                            idx, sim_time = msg
-                            clamped_time = min(sim_time, self.configs[idx].src.duration)
-                            current_times[idx] = clamped_time
-                            bar.n = sum(current_times)
-                            bar.refresh()
-
-                else:
-                    # Multi-bar mode: one progress bar per config
-                    bars = [
+                # create bars
+                bars = []
+                for idx, cfg in enumerate(self.configs):
+                    bars.append(
                         tqdm(
                             total=cfg.src.duration,
                             desc=cfg.name,
                             position=idx,
-                            leave=False,
                             bar_format="{desc}: {percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
                         )
-                        for idx, cfg in enumerate(self.configs)
-                    ]
+                    )
 
-                    def listener():
-                        while True:
-                            msg = q.get()
-                            if msg is None:
-                                break
-                            idx, sim_time = msg
-                            bars[idx].n = min(sim_time, bars[idx].total)
-                            bars[idx].refresh()
+                # function to update bars from queue
+                def listener():
+                    while True:
+                        msg = q.get()
+                        # handle sentinel indicating end of process
+                        if msg is None:
+                            break
+                        idx, sim_time = msg
+                        bars[idx].n = min(sim_time, bars[idx].total)
+                        bars[idx].refresh()
 
                 t = threading.Thread(target=listener, daemon=True)
                 t.start()
 
             try:
                 with Pool(self.nproc) as p:
-                    params = [
-                        (idx, cfg, q) for idx, cfg in enumerate(self.configs)
-                    ]
+                    params = []
+                    for idx, cfg in enumerate(self.configs):
+                        params.append((idx, cfg, q))
                     results = p.starmap(self._run_sim, params)
             finally:
                 if progress_bar:
                     q.put(None)
                     t.join()
-                    if single_bar:
-                        bar.n = bar.total
-                        bar.refresh()
-                        bar.close()
-                    else:
-                        for b in bars:
-                            b.n = b.total
-                            b.refresh()
-                            b.close()
+                    for b in bars:
+                        b.n = b.total
+                        b.refresh()
+                        b.close()
 
         self.results = results
+
         return results
 
     def save(self):
@@ -3148,25 +3038,14 @@ class SimulationRunner:
             directory: Directory containing pickles
         """
 
-        warnings.warn("Runner save is done automatically", DeprecationWarning)
-
         # check results exist
         if not self.results:
             raise RuntimeError("No results to save.")
 
         # save to directory
         for res in self.results:
-            self._save_single(res)
-
-    def _save_single(self, result: SimulationResults):
-        """Saves a single simulation result with hashed name.
-
-        Args:
-            result: Result from simulation.
-        """
-
-        path = os.path.join(self.results_dir, f"{result.config.startup_hash}.pkl")
-        result.save(path)
+            path = os.path.join(self.results_dir, f"{res.config.startup_hash}.pkl")
+            res.save(path)
 
     @staticmethod
     def load(directory: str) -> list[SimulationResults]:
@@ -3237,8 +3116,6 @@ class SimulationRunner:
 
         sim = CapacitorStorageSim(config, progress=progress)
         result = sim.run()
-
-        self._save_single(result)
 
         return result
 
