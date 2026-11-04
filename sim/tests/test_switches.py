@@ -58,35 +58,38 @@ class TestTemplate(unittest.TestCase):
     # THESE DO NOT WORK
     # One of them completely segfaults the test
 
-    # def test_DMP1555UFA(self):
-    #    sim = create_sim(Switches.DMP1555UFA())
-    #    sim.run()
+    #def test_DMP1555UFA(self):
+    #   sim = create_sim(Switches.DMP1555UFA())
+    #   sim.run()
 
-    #    self.assertTrue(True)
+    #   self.assertTrue(True)
 
-    # def test_DMP21D2UFA(self):
-    #    sim = create_sim(Switches.DMP21D2UFA())
-    #    sim.run()
+    # possibly work
+    #def test_DMP21D2UFA(self):
+    #   sim = create_sim(Switches.DMP21D2UFA())
+    #   sim.run()
 
-    #    self.assertTrue(True)
+    #   self.assertTrue(True)
 
-    # def test_RZM002P02(self):
-    #    sim = create_sim(Switches.RZM002P02())
-    #    sim.run()
+    # works
+    def test_RZM002P02(self):
+       sim = create_sim(Switches.RZM002P02())
+       sim.run()
 
-    #    self.assertTrue(True)
+       self.assertTrue(True)
 
-    # def test_BSS223PW(self):
-    #    sim = create_sim(Switches.DMP1555UFA())
-    #    sim.run()
+    #def test_BSS223PW(self):
+    #   sim = create_sim(Switches.DMP1555UFA())
+    #   sim.run()
 
-    #    self.assertTrue(True)
+    #   self.assertTrue(True)
 
-    # def test_SSM3J36FS(self):
-    #    sim = create_sim(Switches.SSM3J36FS())
-    #    sim.run()
+    # Segfaults
+    #def test_SSM3J36FS(self):
+    #   sim = create_sim(Switches.SSM3J36FS())
+    #   sim.run()
 
-    #    self.assertTrue(True)
+    #   self.assertTrue(True)
 
 
 if __name__ == "__main__":
