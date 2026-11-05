@@ -2736,6 +2736,8 @@ class CapacitorStorageSim:
         self.analysis = analysis
         self.results = results
 
+        import pdb; pdb.set_trace()
+
         return results
 
     def show(self):

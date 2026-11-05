@@ -33,12 +33,12 @@ C1 1 2 {C}
 *
 *
 C1    p n {Cval}
-Rleak p n R='min(max(max(k * Cval * abs(v(p,n)), abs(v(p,n)) / Imin), Rmin), Rmax)'
+Rleak p n R='min(max(abs(v(p,n)) / max(k * Cval * abs(v(p,n)), Imin), Rmin), Rmax)'
 
 * Debug statements
-*Brprobe rprobe 0 V='min(max(max(k * Cval * abs(v(p,n)), abs(v(p,n)) / Imin), Rmin), Rmax)'
-*Bvprobe vprobe 0 V='v(p,n)'
-*Bcvprobe cvprobe 0 V='k * Cval * abs(v(p,n))'
-*Biprobe iprobe 0 V='abs(v(p,n)) / Imin'
+Brprobe rprobe 0 V='min(max(abs(v(p,n)) / max(k * Cval * abs(v(p,n)), Imin), Rmin), Rmax)'
+Bvprobe vprobe 0 V='v(p,n)'
+Bcvprobe cvprobe 0 V='k * Cval * abs(v(p,n))'
+Biprobe iprobe 0 V='abs(v(p,n)) / Imin'
 
 .ends C_cv
