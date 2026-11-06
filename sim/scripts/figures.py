@@ -11,6 +11,7 @@ Terminology (used in every label and caption):
     B+_p, B-_p -- Cantelli safe and failure budgets; B-_p <= B_p <= B+_p.
     N(B)      -- number of tasks completed before brownout.
 """
+import csv
 import math
 from pathlib import Path
 
@@ -24,9 +25,9 @@ import matplotlib.ticker
 import matplotlib.text
 from matplotlib.colors import ListedColormap, Normalize
 from matplotlib.lines import Line2D
-from matplotlib.patches import Patch
+from matplotlib.patches import Patch, Rectangle
 
-from sweep_trigger import (P, e, depth_profile, exact_tail, cantelli_bound,
+from sim.sweep_trigger import (P, e, depth_profile, exact_tail, cantelli_bound,
                            cantelli_lower, exact_required_budget, expected_completed,
                            progress_steps, min_trajectory_energy)
 
@@ -347,6 +348,9 @@ def fig1_risk_map():
 
 
 PAGE_W, COL_W = 7.0, 3.33  # ACM sigconf \textwidth and \columnwidth, in inches
+SWEEP_CARS = Path.home() / "catch" / "sweep_cars"
+SWEEP_ARMS = (("thimble_noreplan", "No replan"), ("thimble_depth", "Depth"), ("thimble_risk", "Risk"))
+SWEEP_WAKES = (("vmax", r"$V_{\max}$"), ("energy", "Energy"))
 
 
 def label_vertex_counts(fig, ax, fontsize=7.5, color="white", halo_color="black", gap=3.0,
@@ -879,6 +883,100 @@ def fig1c_trajectory_tree_column(height=4.6, label_fontsize=7.0, xpad=1.5, ms=4.
     return crowded
 
 
+# ---------------------------------------------------------------- Figure: cars dose-response
+def load_sweep(summary):
+    """(A, B, tph, zero) from a dose-response summary.csv. tph[(wake, arm)] is the arm's mean
+    tasks per hour pooled over nodes and seeds (every arm runs the same node/seed set, so ratios
+    of these are summary.csv's vs_leacs); zero[wake] the number of runs per cell in which LEACS
+    completed no task; both indexed [b, a]. Missing cells stay NaN."""
+    with open(summary, newline="") as f:
+        rows = list(csv.DictReader(f))
+    A = sorted({float(r["a"]) for r in rows})
+    B = sorted({float(r["b"]) for r in rows})
+    tph, zero = {}, {}
+    for r in rows:
+        i, j = B.index(float(r["b"])), A.index(float(r["a"]))
+        tph.setdefault((r["wake"], r["arm"]), np.full((len(B), len(A)), np.nan))[i, j] = float(r["tasks_per_h"])
+        if r["arm"] == "leacs":
+            zero.setdefault(r["wake"], np.full((len(B), len(A)), np.nan))[i, j] = int(r["leacs_zero_runs"])
+    return A, B, tph, zero
+
+
+def cars_heatmaps(summary=SWEEP_CARS / "summary.csv", energy=False, row=False, baseline="leacs", height=None):
+    """Thimble throughput relative to a baseline over the (a, b) plane on cars, pooled over
+    held-out traces and seeds, for the Vmax wake rule (plus energy if energy=True).
+    baseline="leacs": every Thimble arm against LEACS. baseline="thimble_noreplan": the
+    replanning arms (depth, risk) against Thimble without replanning; saved with "_replan".
+    row=False: one \\columnwidth column, rows = arm, columns = wake rule; with the LEACS
+    baseline, hatched cells: LEACS completed no task on some runs. row=True: \\textwidth, rows =
+    wake rule, columns = arm, no hatching (the caption carries that note); saved with "_row".
+    The diverging scale is centred on parity and sized to the plotted frames; the colorbar
+    spans only their range (and 0)."""
+    wakes = SWEEP_WAKES if energy else tuple(w for w in SWEEP_WAKES if w[0] != "energy")
+    arms = tuple(a for a in SWEEP_ARMS if a[0] != baseline)
+    base_label = "LEACS" if baseline == "leacs" else dict(SWEEP_ARMS)[baseline]
+    if row:
+        panels = [[(arm, wake) for arm in arms] for wake in wakes]
+    else:
+        panels = [[(arm, wake) for wake in wakes] for arm in arms]
+    shape = (len(panels), len(panels[0]))
+    if height is None:
+        height = {(False, (3, 1)): 5.0, (False, (3, 2)): 5.6, (True, (1, 3)): 2.4, (True, (2, 3)): 4.2,
+                  (False, (2, 1)): 4.0, (False, (2, 2)): 4.0, (True, (1, 2)): 2.4, (True, (2, 2)): 4.2}[(row, shape)]
+    hatch = baseline == "leacs" and not row
+    A, B, tph, zero = load_sweep(summary)
+    rel = {}
+    with np.errstate(divide="ignore", invalid="ignore"):
+        for w, _ in wakes:
+            for arm, _ in arms:
+                if (w, arm) in tph and (w, baseline) in tph:
+                    r = 100 * (tph[(w, arm)] / tph[(w, baseline)] - 1)
+                    rel[(w, arm)] = np.where(np.isfinite(r), r, np.nan)   # zero baseline mean: no ratio
+    vals = np.concatenate([g.ravel() for g in rel.values()])
+    lo = 10 * math.floor(min(np.nanmin(vals), 0) / 10)
+    hi = 10 * math.ceil(max(np.nanmax(vals), 0) / 10)
+    cmap = plt.get_cmap("RdBu").with_extremes(bad="0.85")
+    norm = Normalize(-max(-lo, hi), max(-lo, hi))
+    width = (PAGE_W if row else COL_W) - 2 * plt.rcParams["savefig.pad_inches"]   # save() pads each side
+    fig, axs = plt.subplots(len(panels), len(panels[0]), figsize=(width, height), sharex=True, sharey=True,
+                            squeeze=False, layout="constrained")
+    for ax, letter, ((arm, arm_label), (wake, wake_label)) in zip(axs.flat, "abcdef", sum(panels, [])):
+        grid = rel.get((wake, arm), np.full((len(B), len(A)), np.nan))
+        im = ax.imshow(grid, cmap=cmap, norm=norm, origin="lower", aspect="equal", interpolation="nearest")
+        for (i, j), v in np.ndenumerate(grid):
+            if np.isfinite(v):
+                s = "0" if round(v) == 0 else f"{v:+.0f}".replace("-", "\u2212")
+                r, g, b_, _ = cmap(norm(v))
+                ax.text(j, i, s, ha="center", va="center", fontsize=6.5, zorder=3,
+                        color="white" if 0.2126 * r + 0.7152 * g + 0.0722 * b_ < 0.45 else "black")
+        zw = zero.get(wake)
+        if hatch and zw is not None:
+            for i, j in zip(*np.nonzero(zw > 0)):
+                ax.add_patch(Rectangle((j - 0.5, i - 0.5), 1, 1, fill=False, lw=0, hatch="////",
+                                       hatchcolor="0.35", hatch_linewidth=0.4, zorder=2))
+        ax.set_title(f"({letter}) {arm_label}, {wake_label}", fontsize=7.5)
+        ax.set_xticks([0, 2, 4], [f"{A[k]:g}" for k in (0, 2, 4)])
+        ax.set_xticks([1, 3], minor=True)
+        ax.set_yticks([0, 2, 4], [f"{B[k]:g}" for k in (0, 2, 4)])
+        ax.set_yticks([1, 3], minor=True)
+        ax.tick_params(labelsize=6.5)
+    for ax in axs[:, 0]:
+        ax.set_ylabel(r"$b$ = P(R$\rightarrow$T)")
+    for ax in axs[-1]:
+        ax.set_xlabel(r"$a$ = P(A$\rightarrow$M)")
+    cb = fig.colorbar(im, ax=axs, location="bottom" if not row and len(wakes) > 1 else "right", aspect=35,
+                      shrink=0.9, boundaries=np.linspace(lo, hi, 257),
+                      ticks=np.arange(lo, hi + 1, 10 if hi - lo <= 60 else 30))
+    sep = "\n" if axs.shape[0] == 1 or baseline != "leacs" else " "   # else the label outruns the colorbar
+    num = "Thimble" if baseline == "leacs" else "Replanning"
+    cb.set_label(f"({num} \u2212 {base_label}) / {base_label},{sep}tasks per hour (%)", fontsize=7.5)
+    if hatch:
+        fig.legend(handles=[Patch(facecolor="white", edgecolor="0.35", hatch="////", lw=0.4,
+                                  label="LEACS completed no task on some runs")],
+                   loc="outside upper center", frameon=False, fontsize=7)
+    save(fig, "cars_heatmaps" + ("_replan" if baseline != "leacs" else "") + ("_row" if row else ""))
+
+
 if __name__ == "__main__":
     fig1_risk_map()
     fig1b_risk_map_trajectories()
@@ -894,3 +992,6 @@ if __name__ == "__main__":
     fig7_tree_and_triggers()
     fig5_trigger_panel()
     fig1c_trajectory_tree_column()
+    cars_heatmaps()
+    cars_heatmaps(row=True)
+    cars_heatmaps(baseline="thimble_noreplan")
