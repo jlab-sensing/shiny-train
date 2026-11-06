@@ -758,7 +758,8 @@ def fig6_tree_and_trigger(height=3.6, count_fontsize=7.0, ratio=(1.0, 1.0), gap=
 
 
 def draw_trigger_panel(ax, sigmas=(15e-3, 25e-3, 35e-3), styles=(":", "--", "-"),
-                       eps=(0.0, 0.01, 0.05, 0.1, 0.2), max_depth=PAPER_DEPTH, xtick_step=2):
+                       eps=(0.0, 0.01, 0.05, 0.1, 0.2), max_depth=PAPER_DEPTH, xtick_step=2,
+                       xlabel=r"Execution Depth $D$"):
     """Replanning depth chosen by the variance trigger and by the exact risk trigger of the
     forecast, over the candidate trajectories. Returns (variance+context handles, risk handles).
 
@@ -781,7 +782,7 @@ def draw_trigger_panel(ax, sigmas=(15e-3, 25e-3, 35e-3), styles=(":", "--", "-")
     ax.set_xlim(-0.5, max_depth + 0.5)
     ax.set_ylim(0, tree_top(max_depth))
     ax.set_xticks(range(0, max_depth + 1, xtick_step))
-    ax.set_xlabel(r"Execution Depth $D$")
+    ax.set_xlabel(xlabel)
     ax.set_ylabel(r"Energy Budget $B$ (mJ)")
     var_handles = [Line2D([], [], color=C_VAR, ls=ls, lw=1.6, label=rf"Replan at $\sigma_D \geq$ {s*1e3:.0f} mJ")
                    for s, ls in zip(sigmas, styles)]
@@ -791,14 +792,39 @@ def draw_trigger_panel(ax, sigmas=(15e-3, 25e-3, 35e-3), styles=(":", "--", "-")
     return var_handles + context, risk_handles
 
 
-def fig5_trigger_comparison():
-    """Paper figure (single column), drawn at print size."""
-    fig, ax = plt.subplots(figsize=(COL_W, 3.95), layout="constrained")
-    left, right = draw_trigger_panel(ax)
-    # Column-major fill: left column variance trigger + context, right column risk trigger.
-    fig.legend(handles=left + right, loc="outside lower center", ncol=2, frameon=False,
-               handlelength=1.8, columnspacing=0.9, fontsize=7)
-    save(fig, "fig5_trigger_comparison")
+def fig5_trigger_comparison(width=3.3, height=2.2, max_depth=PAPER_DEPTH, fontsize=7.0,
+                            legend_fontsize=6.0, xtick_step=2, xlabel=r"Execution Depth $D$"):
+    """Single-column version of Figure 5 (\\columnwidth = 3.3 in), minimized in height
+    (default 2.2 in) for compact publication layouts while preserving curve separation
+    and readability across all execution depths."""
+    rc = {
+        "font.size": fontsize,
+        "axes.labelsize": fontsize,
+        "axes.titlesize": fontsize,
+        "xtick.labelsize": fontsize - 1.0,
+        "ytick.labelsize": fontsize - 1.0,
+        "legend.fontsize": legend_fontsize,
+        "axes.linewidth": 0.5,
+        "lines.linewidth": 0.9,
+    }
+    with plt.rc_context(rc):
+        fig, ax = plt.subplots(figsize=(width, height), layout="constrained")
+        left, right = draw_trigger_panel(ax, max_depth=max_depth, xtick_step=xtick_step, xlabel=xlabel)
+        # Column-major fill: left column variance trigger + context, right column risk trigger.
+        fig.legend(handles=left + right, loc="outside lower center", ncol=2, frameon=False,
+                   handlelength=1.3, columnspacing=0.8, handletextpad=0.25, labelspacing=0.1)
+        save(fig, "fig5_trigger_comparison")
+        return fig, ax
+
+
+def fig5_trigger_comparison_column(width=3.3, height=2.2, max_depth=PAPER_DEPTH, fontsize=7.0,
+                                   legend_fontsize=6.0, xtick_step=2, xlabel=r"Execution Depth $D$"):
+    """Single-column version of Figure 5, matching the naming convention of fig1c_trajectory_tree_column."""
+    fig, ax = fig5_trigger_comparison(width=width, height=height, max_depth=max_depth,
+                                      fontsize=fontsize, legend_fontsize=legend_fontsize,
+                                      xtick_step=xtick_step, xlabel=xlabel)
+    save(fig, "fig5_trigger_comparison_column")
+    return fig, ax
 
 
 _FIG7_PANEL_B = {}   # plot-area size of Figure 7's panel (b), recorded when Figure 7 is built
@@ -862,25 +888,40 @@ def fig5_trigger_panel():
     save(fig, "fig5_trigger_panel")
 
 
-def fig1c_trajectory_tree_column(height=4.6, label_fontsize=7.0, xpad=1.5, ms=4.4, gap=2.0):
-    """Single-column version of Figure 1c (\\columnwidth), drawn at print size so every
-    font prints at the same size as the other figures. All vertex probabilities are
-    labelled; the state legend sits below the plot to leave the tree its full width."""
-    fig, ax = plt.subplots(figsize=(COL_W, height), layout="constrained")
-    leg = draw_tree_panel(ax, ms=ms, xpad=xpad, xtick_step=2,
-                          xlabel=r"Execution Depth $D$ (Tasks after the Replan)")
-    handles = leg.legend_handles
-    leg.remove()
-    fig.legend(handles=handles, labels=[t.get_text() for t in leg.get_texts()], loc="outside lower center",
-               ncol=3, frameon=False, handletextpad=0.3, columnspacing=0.9)
-    probs = {k: fmt_pct(p) for k, p in vertex_probabilities(PAPER_DEPTH).items()}   # every vertex
-    crowded = label_vertex_counts(fig, ax, fontsize=label_fontsize, color="black", halo_color="white",
-                                  gap=gap, dot_r=ms / 2, max_depth=PAPER_DEPTH, texts=probs,
-                                  leaders=True, constrained_first=True)
-    if crowded:
-        print(f"note: {crowded} labels in fig1c (column) kept at default despite crowding")
-    save(fig, "fig1c_trajectory_tree_column")
-    return crowded
+def fig1c_trajectory_tree_column(width=3.3, height=1.6, max_depth=6, fontsize=7.0,
+                                 label_fontsize=5.5, legend_fontsize=6.0, legend_loc="upper left",
+                                 legend_ncol=2, xpad=0.8, ms=3.4, gap=1.3, xlabel=r"Execution Depth $D$"):
+    """Single-column version of Figure 1c (\\columnwidth = 3.3 in), minimized in height
+    (default 1.6 in) for compact publication layouts. Uses a 2-column inside legend and
+    reduced typography while maintaining zero label crowding."""
+    rc = {
+        "font.size": fontsize,
+        "axes.labelsize": fontsize,
+        "axes.titlesize": fontsize,
+        "xtick.labelsize": fontsize - 1.0,
+        "ytick.labelsize": fontsize - 1.0,
+        "legend.fontsize": legend_fontsize,
+        "axes.linewidth": 0.5,
+        "lines.linewidth": 0.9,
+    }
+    with plt.rc_context(rc):
+        fig, ax = plt.subplots(figsize=(width, height), layout="constrained")
+        leg = draw_tree_panel(ax, max_depth=max_depth, ms=ms, xpad=xpad, xtick_step=1,
+                              xlabel=xlabel)
+        handles = leg.legend_handles
+        labels = [t.get_text() for t in leg.get_texts()]
+        leg.remove()
+        leg = ax.legend(handles=handles, labels=labels, loc=legend_loc, ncol=legend_ncol,
+                        framealpha=0.9, handletextpad=0.15, borderpad=0.15, labelspacing=0.1,
+                        columnspacing=0.4, fontsize=legend_fontsize, handlelength=0.9)
+        probs = {k: fmt_pct(p) for k, p in vertex_probabilities(max_depth).items()}
+        crowded = label_vertex_counts(fig, ax, fontsize=label_fontsize, color="black", halo_color="white",
+                                      gap=gap, dot_r=ms / 2, avoid=[leg], max_depth=max_depth, texts=probs,
+                                      leaders=True, constrained_first=True)
+        if crowded:
+            print(f"note: {crowded} labels in fig1c (column) kept at default despite crowding")
+        save(fig, "fig1c_trajectory_tree_column")
+        return crowded
 
 
 # ---------------------------------------------------------------- Figure: cars dose-response
@@ -992,6 +1033,7 @@ if __name__ == "__main__":
     fig7_tree_and_triggers()
     fig5_trigger_panel()
     fig1c_trajectory_tree_column()
+    fig5_trigger_comparison_column()
     cars_heatmaps()
     cars_heatmaps(row=True)
     cars_heatmaps(baseline="thimble_noreplan")
