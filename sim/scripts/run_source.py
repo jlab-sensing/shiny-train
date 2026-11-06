@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 
-"""One source, both wake rules: LEACS vs. three Thimble variants.
+"""Each Bonito source file, both wake rules: LEACS vs. three Thimble variants.
 
-For each wake rule:
+For each source file and wake rule:
   1. LEACS ranks every static plan on the training node (faithful LEACS:
      simulate every candidate, keep the best, never replan).
   2. On every held-out node and test seed, run LEACS's plan and Thimble
@@ -12,28 +12,40 @@ For each wake rule:
 Every run uses the same task sequence for a given seed (common random
 numbers), so arms can be compared run by run.
 
+Source files: FILENAMES below, or on the command line,
+    python run_source.py --filenames pwr_cars.h5 pwr_jogging.h5
+Each file gets its own output directory, OUT_ROOT/template_<name>, where
+<name> is the file name without "pwr_" and ".h5" (pwr_cars.h5 -> template_cars).
+Its nodes are read from the file: by default the first (in natural order)
+trains LEACS and the rest are held out.
+
 Resumable, two ways:
-  - each finished run is appended to OUT/progress.jsonl, and runs listed there
-    are never rebuilt;
-  - evaluation results are saved by SimulationRunner.save() as
-    RESULTS_DIR/<startup_hash>.pkl, and SimulationRunner skips any config whose
-    pickle already exists, so a crash between saving and recording costs only
-    reloading that batch.
+  - each finished run is appended to <out>/progress.jsonl, and runs listed
+    there are never rebuilt;
+  - results are saved by SimulationRunner.save() as
+    <out>/results/<startup_hash>.pkl, and SimulationRunner skips any config
+    whose pickle already exists, so a crash between saving and recording costs
+    only reloading that batch.
 A crash loses at most one batch.
 
 Cache keys: CapacitorStorageSimConfig computes startup_hash in its own
 __init__, before LeacSimConfig sets the wake rule, the replanning settings or a
 LEACS plan. Configs that differ only in those would share a hash and SimulationRunner
 would hand one run's results to another. key_config() below folds a
-description of each job into the hash to keep them apart.
+description of each job into the hash to keep them apart. The source file and
+node are already in the hash (they are attributes of the source).
 """
 
+import argparse
 import csv
 import hashlib
 import json
 import os
+import re
 import time
+from types import SimpleNamespace
 
+import h5py
 import numpy as np
 
 from sim.callback import LeacSimConfig, tasks_from_sm
@@ -49,17 +61,17 @@ from sim.models import (
 from sim.state_machines import MATRSinkSM
 
 # --- settings ---------------------------------------------------------------
+FILENAMES = ["pwr_cars.h5"]                           # Bonito files in the data path; or --filenames
+SOURCE = dict(downsample=10000)                       # other BonitoSource kwargs (datapath, offset)
+TRAIN_NODE, TEST_NODES = None, None                   # None: first node trains, the rest are held out
 CATALOG = capacitor_list(1e-3, 6.8e-3, decade="E6")   # 1.0, 1.5, 2.2, 3.3, 4.7, 6.8 mF
 CAP_LIMIT = 2                                         # M, for LEACS and Thimble
 A, B = 0.5, 0.5                                       # P(analyze -> measure), P(rx -> tx)
 WAKE_RULES = ["vmax", "energy"]                       # vmax is LEACS's own rule
 ROUTING = "fallback"
-SOURCE = dict(downsample=10000)                       # add filename=... for another Bonito source
-TRAIN_NODE, TEST_NODES = "node0", ["node1", "node2", "node3"]
 TRAIN_SEEDS, TEST_SEEDS = [100, 101], [1, 2, 3]
 TRAIN_DURATION, TEST_DURATION = 1200, 3600            # simulated seconds
-OUT = "/home/mwmaster/catch/template_cars"
-RESULTS_DIR = os.path.join(OUT, "results")             # <startup_hash>.pkl, one per evaluation run
+OUT_ROOT = "/home/mwmaster/catch"                     # one template_<name> directory per file
 SAVE_RANKING = True                                  # ranking pickles: ~200 x 20-min runs per wake rule
 CACHE_TAG = "v1"                                      # change after editing callback.py, to rerun everything
 
@@ -110,7 +122,8 @@ class ThimbleConfig(EventLog, LeacSimConfig):
 
 def key_config(cfg, job):
     """Fold the job's own settings into cfg.startup_hash, which otherwise only
-    covers the source, capacitors, sink, power lines and switch (see above)."""
+    covers the source (file and node included), capacitors, sink, power lines
+    and switch (see above)."""
     settings = dict(kind=job["kind"], plan=job.get("plan"), wake=job["wake"], routing=ROUTING,
                     a=A, b=B, arm=ARMS.get(job["kind"]), cap_limit=CAP_LIMIT, tag=CACHE_TAG)
     text = cfg.startup_hash + json.dumps(settings, sort_keys=True)
@@ -119,32 +132,60 @@ def key_config(cfg, job):
     return cfg
 
 
-def make_config(kind, node, seed, duration, wake, plan=None):
+def make_config(job):
     common = dict(
-        src=BonitoSource(name=node, duration=duration, **SOURCE),
+        src=BonitoSource(filename=job["file"], name=job["node"], duration=job["duration"], **SOURCE),
         caps=[CVCapacitor(C) for C in CATALOG],
-        sink=SMSink(MATRSinkSM(a=A, b=B, seed=seed)),
-        p_lines=2, wake_rule=wake, harvest_routing=ROUTING,
+        sink=SMSink(MATRSinkSM(a=A, b=B, seed=job["seed"])),
+        p_lines=2, wake_rule=job["wake"], harvest_routing=ROUTING,
     )
-    if kind == "leacs":
-        return LeacsPlanConfig(plan=plan, **common)
-    return ThimbleConfig(**ARMS[kind], **common)
+    if job["kind"] == "leacs":
+        cfg = LeacsPlanConfig(plan=job["plan"], **common)
+    else:
+        cfg = ThimbleConfig(**ARMS[job["kind"]], **common)
+    return key_config(cfg, job)
+
+
+# --- one source file ---------------------------------------------------------
+def natural_key(name):
+    """node2 before node10."""
+    return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", name)]
+
+
+def source_setup(filename):
+    """Output paths, nodes and time step for one Bonito file. Fails early if
+    the file is shorter than the runs."""
+    name = os.path.splitext(os.path.basename(filename))[0].removeprefix("pwr_")
+    out = os.path.join(OUT_ROOT, f"template_{name}")
+    probe = BonitoSource(filename=filename, duration=0, **SOURCE)    # resolves the data path
+    with h5py.File(probe.fullpath, "r") as f:
+        nodes = sorted(f["data"].keys(), key=natural_key)
+        span = float(f["time"][-1] - f["time"][0])
+    train = TRAIN_NODE or nodes[0]
+    test = TEST_NODES or [n for n in nodes if n != train]
+    longest = max(TRAIN_DURATION, TEST_DURATION)
+    if longest > span:
+        # raise ValueError(f"{filename} covers {span:.0f} s, shorter than the {longest} s runs")
+        print(f"{filename} covers {span:.0f} s, shorter than the {longest} s runs")
+    missing = [n for n in [train, *test] if n not in nodes]
+    if missing:
+        raise ValueError(f"{filename} has no node(s) {missing}; it has {nodes}")
+    return SimpleNamespace(file=filename, name=name, out=out, results=os.path.join(out, "results"),
+                           progress=os.path.join(out, "progress.jsonl"), train=train, test=test,
+                           dt=probe.dt, span=span)
 
 
 # --- progress ---------------------------------------------------------------
-PROGRESS = os.path.join(OUT, "progress.jsonl")
-
-
-def load_progress():
-    """Finished runs by name, from progress.jsonl."""
-    if not os.path.exists(PROGRESS):
+def load_progress(path):
+    """Finished runs by name, from a progress.jsonl."""
+    if not os.path.exists(path):
         return {}
-    with open(PROGRESS, "rb+") as fh:              # end a line cut off by the crash,
+    with open(path, "rb+") as fh:                  # end a line cut off by the crash,
         fh.seek(0, os.SEEK_END)                    # so new records start on their own line
         if fh.tell() and (fh.seek(-1, os.SEEK_END) or fh.read(1) != b"\n"):
             fh.write(b"\n")
     done = {}
-    for line in open(PROGRESS):
+    for line in open(path):
         try:
             rec = json.loads(line)
             done[rec["name"]] = rec
@@ -153,8 +194,8 @@ def load_progress():
     return done
 
 
-def record(rec):
-    with open(PROGRESS, "a") as fh:
+def record(path, rec):
+    with open(path, "a") as fh:
         fh.write(json.dumps(rec) + "\n")
         fh.flush()
         os.fsync(fh.fileno())
@@ -166,29 +207,26 @@ def throughput(events, duration):
     return tasks * 3600 / duration, reports * 3600 / duration
 
 
-def run_jobs(jobs, save):
+def run_jobs(site, jobs, save):
     """Run the jobs not yet finished, in batches of one per core. With save,
-    results go to RESULTS_DIR first and the progress line second, so a run is
-    never recorded without its pickle."""
-    done = load_progress()
+    results go to the results directory first and the progress line second,
+    so a run is never recorded without its pickle."""
+    done = load_progress(site.progress)
     todo = [j for j in jobs if j["name"] not in done]
     print(f"  {len(jobs) - len(todo)} of {len(jobs)} already done")
     batch = os.cpu_count() or 4
     for k in range(0, len(todo), batch):
         chunk = todo[k:k + batch]
-        configs = [key_config(make_config(j["kind"], j["node"], j["seed"], j["duration"], j["wake"],
-                                          j.get("plan")), j)
-                   for j in chunk]
-        runner = SimulationRunner(configs, results_dir=RESULTS_DIR)   # loads any cached pickle
-        results = runner.run(progress_bar=True)
+        runner = SimulationRunner([make_config(j) for j in chunk], results_dir=site.results)
+        results = runner.run(progress_bar=True)    # loads any cached pickle
         if save:
-            runner.save()                          # RESULTS_DIR/<startup_hash>.pkl
+            runner.save()                          # <out>/results/<startup_hash>.pkl
         for j, res in zip(chunk, results):
             rec = dict(j)
             rec["tasks_per_h"], rec["reports_per_h"] = throughput(res.events, j["duration"])
-            record(rec)
+            record(site.progress, rec)
         print(f"  {min(k + batch, len(todo))}/{len(todo)}")
-    done = load_progress()
+    done = load_progress(site.progress)
     return [done[j["name"]] for j in jobs]
 
 
@@ -214,19 +252,19 @@ def static_plans(catalog, max_caps):
     return plans
 
 
-def rank_leacs(wake):
-    """LEACS's plan for this wake rule: highest mean tasks per hour on the
-    training node, then fewer capacitors, then less leakage."""
+def rank_leacs(site, wake):
+    """LEACS's plan for this source and wake rule: highest mean tasks per hour
+    on the training node, then fewer capacitors, then less leakage."""
     plans = static_plans(CATALOG, CAP_LIMIT)
-    jobs = [dict(name=f"rank/{wake}/{p}/seed{s}", phase="rank", wake=wake, kind="leacs", plan=p,
-                 node=TRAIN_NODE, seed=s, duration=TRAIN_DURATION)
+    jobs = [dict(name=f"rank/{wake}/{p}/seed{s}", phase="rank", file=site.file, wake=wake, kind="leacs",
+                 plan=p, node=site.train, seed=s, duration=TRAIN_DURATION)
             for p, _, _ in plans for s in TRAIN_SEEDS]
-    print(f"[{wake}] ranking {len(plans)} plans x {len(TRAIN_SEEDS)} seeds on {TRAIN_NODE}")
+    print(f"[{site.name} {wake}] ranking {len(plans)} plans x {len(TRAIN_SEEDS)} seeds on {site.train}")
     scores = {}
-    for rec in run_jobs(jobs, save=SAVE_RANKING):
+    for rec in run_jobs(site, jobs, save=SAVE_RANKING):
         scores.setdefault(rec["plan"], []).append(rec["tasks_per_h"])
     ranked = sorted(plans, key=lambda r: (-np.mean(scores[r[0]]), r[1], r[2]))
-    with open(os.path.join(OUT, f"ranking_{wake}.csv"), "w", newline="") as fh:
+    with open(os.path.join(site.out, f"ranking_{wake}.csv"), "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["plan", "n_caps", "leak_W", "tasks_per_h"] + [f"seed{s}" for s in TRAIN_SEEDS])
         for p, n, leak in ranked:
@@ -236,19 +274,19 @@ def rank_leacs(wake):
     return ranked[0][0]
 
 
-def evaluate(wake, plan):
+def evaluate(site, wake, plan):
     """LEACS's plan and every Thimble arm on every held-out node and seed."""
     jobs = []
-    for node in TEST_NODES:
+    for node in site.test:
         for s in TEST_SEEDS:
-            base = dict(phase="eval", wake=wake, node=node, seed=s, duration=TEST_DURATION)
+            base = dict(phase="eval", file=site.file, wake=wake, node=node, seed=s, duration=TEST_DURATION)
             jobs.append(dict(base, name=f"{wake}/leacs_{plan}/{node}/seed{s}", kind="leacs", plan=plan))
             jobs += [dict(base, name=f"{wake}/{arm}/{node}/seed{s}", kind=arm) for arm in ARMS]
-    print(f"[{wake}] evaluating {len(jobs)} runs")
-    return run_jobs(jobs, save=True)
+    print(f"[{site.name} {wake}] evaluating {len(jobs)} runs")
+    return run_jobs(site, jobs, save=True)
 
 
-def summarize(rows):
+def summarize(site, rows):
     """Mean tasks per hour per wake rule and arm, and each Thimble arm paired
     against LEACS on the same node and seed (log ratio)."""
     leacs = {(r["wake"], r["node"], r["seed"]): r["tasks_per_h"] for r in rows if r["kind"] == "leacs"}
@@ -259,31 +297,40 @@ def summarize(rows):
             tph = [r["tasks_per_h"] for r in rs]
             ratios = [np.log(r["tasks_per_h"] / leacs[(wake, r["node"], r["seed"])])
                       for r in rs if leacs.get((wake, r["node"], r["seed"])) and r["tasks_per_h"]]
-            out.append(dict(wake=wake, arm=kind, runs=len(rs), tasks_per_h=np.mean(tph),
+            out.append(dict(source=site.name, wake=wake, arm=kind, runs=len(rs), tasks_per_h=np.mean(tph),
                             vs_leacs=np.mean(ratios) if ratios and kind != "leacs" else float("nan"),
                             wins=np.mean([x > 0 for x in ratios]) if ratios and kind != "leacs" else float("nan")))
-    with open(os.path.join(OUT, "summary.csv"), "w", newline="") as fh:
+    with open(os.path.join(site.out, "summary.csv"), "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(out[0]))
         w.writeheader()
         w.writerows(out)
-    print(f"\n{'wake':7s} {'arm':17s} {'runs':>4s} {'tasks/h':>8s} {'vs LEACS':>9s} {'wins':>5s}")
+    print(f"\n[{site.name}] trains on {site.train}, holds out {', '.join(site.test)}")
+    print(f"{'wake':7s} {'arm':17s} {'runs':>4s} {'tasks/h':>8s} {'vs LEACS':>9s} {'wins':>5s}")
     for o in out:
         print(f"{o['wake']:7s} {o['arm']:17s} {o['runs']:4d} {o['tasks_per_h']:8.1f} "
               f"{o['vs_leacs']:+9.1%} {o['wins']:5.0%}")
     print("(vs LEACS: mean paired log ratio on the same node and seed; LEACS runs with no tasks are left out)")
 
 
-def main():
+def main(filenames=None):
     start = time.time()
-    os.makedirs(RESULTS_DIR, exist_ok=True)
-    rows = []
-    for wake in WAKE_RULES:
-        plan = rank_leacs(wake)
-        print(f"[{wake}] LEACS plan: {plan}")
-        rows += evaluate(wake, plan)
-    summarize(rows)
+    sites = [source_setup(f) for f in (filenames or FILENAMES)]   # check every file before running
+    for site in sites:
+        print(f"[{site.name}] {site.file}: {site.span:.0f} s, step {site.dt:.3g} s, "
+              f"train {site.train}, test {', '.join(site.test)} -> {site.out}")
+    for site in sites:
+        os.makedirs(site.results, exist_ok=True)
+        rows = []
+        for wake in WAKE_RULES:
+            plan = rank_leacs(site, wake)
+            print(f"[{site.name} {wake}] LEACS plan: {plan}")
+            rows += evaluate(site, wake, plan)
+        summarize(site, rows)
     print(f"runtime {time.time() - start:.0f} s")
 
 
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser(description="LEACS vs. Thimble on one or more Bonito source files.")
+    ap.add_argument("--filenames", nargs="+", default=None,
+                    help=f"Bonito .h5 files in the data path (default: {' '.join(FILENAMES)})")
+    main(ap.parse_args().filenames)

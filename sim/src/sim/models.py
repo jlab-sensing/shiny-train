@@ -795,6 +795,7 @@ class BonitoSource(Source):
         power = power_ds[self.idx]
 
         return power*64
+        # return power
 
     def pre_sim(self):
         """Open file once in simulation."""

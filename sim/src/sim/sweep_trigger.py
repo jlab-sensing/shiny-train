@@ -21,7 +21,7 @@ import numpy as np
 from sim.leaf_distribution import moments, sweep
 
 CONST_VOLTAGE = 3.3
-SCALE = 10.0  # measured power; 1.0 reproduces the earlier under-scaled values
+SCALE = 1.0  # measured power; 1.0 reproduces the earlier under-scaled values
 
 # State order: measure, analyze, tx, rx. Analyze is set to twice the measure power
 # (unmeasured; breaks the measure/analyze symmetry). Baseline was 11.68e-4.
